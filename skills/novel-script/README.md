@@ -17,7 +17,7 @@
 
 ![script-report.html](assets/report.webp)
 
-## 质量门：10 道，全是代码
+## 质量门：11 道，全是代码
 
 与仓库里另外三个 skill 同一主张：**checklist 交给模型自觉是靠不住的**。
 
@@ -70,6 +70,8 @@ node scripts/novel-script.mjs seed outline.json --eps 1-3        # 预填骨架
 node scripts/novel-script.mjs validate script.json \
      --outline outline.json --art art.json                       # 校验
 node scripts/novel-script.mjs checkup script.json                # 只跑质量门
+node scripts/novel-script.mjs ids script.json --outline outline.json --write   # 补场次、节拍 id（集 id 照抄大纲）
+node scripts/novel-script.mjs migrate old.json --outline outline.json --write   # 2.x 迁移到 3.0
 node scripts/novel-script.mjs render script.json --html \
      --outline outline.json --art art.json \
      --cast cast.json > script-report.html                       # 出报告（--cast 带音色提示词）
@@ -91,7 +93,7 @@ node scripts/novel-script.mjs slug "渡口"                         # 安全文�
 SKILL.md                 给 agent 读的工作流
 scripts/
   novel-script.mjs       seed / validate / checkup / render / slug
-  selftest.mjs           154 项断言，不调模型
+  selftest.mjs           193 项断言，不调模型
 references/
   schema.md              script.json 结构 + 时长折算规则
   script-pass.md         写戏：硬规则、手感规则、常见病
@@ -108,6 +110,6 @@ assets/
 node scripts/selftest.mjs
 ```
 
-154 项断言，覆盖时长引擎 / 统计 / 质量门逐项击穿 / seed / 渲染（含英文界面）/ 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
+193 项断言，覆盖时长引擎 / 统计 / 质量门逐项击穿 / seed / 渲染（含英文界面）/ 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
 
 **只在 macOS + Node 24 上实测过。** 代码没有平台相关调用，Linux 和更低版本 Node 理论上没问题，但**没验过**。

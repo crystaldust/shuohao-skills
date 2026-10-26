@@ -69,6 +69,8 @@ One layer down comes the storyboard skill: shot numbers, per-shot duration, firs
 node scripts/novel-script.mjs seed outline.json --eps 1-3
 node scripts/novel-script.mjs validate script.json --outline outline.json --art art.json
 node scripts/novel-script.mjs checkup script.json
+node scripts/novel-script.mjs ids script.json --outline outline.json --write      # assign scene / beat IDs (episode IDs copied from the outline)
+node scripts/novel-script.mjs migrate old.json --outline outline.json --write     # migrate a 2.x script
 node scripts/novel-script.mjs render script.json --html --outline outline.json --art art.json --cast cast.json > script-report.html
 node scripts/novel-script.mjs render script.json --html --lang en --outline outline.json --art art.json > script-report.html
 ```
@@ -88,7 +90,7 @@ The report UI defaults to Chinese; `--lang en` renders it fully in English.
 node scripts/selftest.mjs
 ```
 
-154 assertions — timing engine, stats, gate-defeating cases, seed, rendering (both UI languages), export. No model calls, runs in about a second.
+193 assertions — timing engine, stats, gate-defeating cases, seed, rendering (both UI languages), export. No model calls, runs in about a second.
 
 The bundled example (`examples/渡口-script.json`) is a **complete 6-episode script** — 9 scenes, 123 lines, every episode inside the ±15% band, all gates passing against the outline and art fixtures.
 
