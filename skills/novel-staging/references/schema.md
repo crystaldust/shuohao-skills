@@ -50,8 +50,9 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `ep` | number | 集号 |
-| `scene` | number | 这一集的第几场，从 1 开始，对账 script.json 的 `episodes[].scenes[]` 顺序 |
+| `ep` | number | 集号。显示缓存：给了 `--script` 时门检查它跟剧本一致 |
+| `scene` | number | 这一集的第几场，从 1 开始。显示缓存：给了 `--script` 时门检查它等于这一场在剧本里的位置 |
+| `sceneRef` | string | **这一场的身份**：剧本场次 id（`sc_…`），`seed` 从剧本照抄，不要手写。`validate --script` 按它找剧本场次，不按集号场号——剧本里插了一场，站位仍对得上原来那一场 |
 | `sceneId` | string | 在哪个地点，对账 `locations[].sceneId` |
 | `lighting` | string，可选 | 剧本写的时段光照，`seed` 搬过来，只给人看 |
 | `cast` | {id, name}[] | 这一场的出场人物，`seed` 从剧本搬过来，不改 |
