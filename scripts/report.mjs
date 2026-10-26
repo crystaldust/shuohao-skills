@@ -76,7 +76,8 @@ export const PANES = [
     labelEn: 'Art',
     hint: '场景与道具',
     hintEn: 'Scenes & props',
-    needs: ['--cast'],
+    // --outline：出现集记的是集 id，给了大纲才能显示成集号
+    needs: ['--cast', '--outline'],
   },
   {
     id: 'script',

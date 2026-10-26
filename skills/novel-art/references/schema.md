@@ -13,7 +13,7 @@
     "lighting": [{ "state": "晨雾", "prompt": "dense white morning fog ..." }],
     "image": { "prompt": "…", "negativePrompt": "…", "sheet": "…", "tags": [] },
     "variantOf": "S02", "changes": "换背板 + 芦苇前景",
-    "usage": { "episodes": [1, 6], "beats": ["悬念钩"] }
+    "usage": { "episodes": ["ep_k3f9q2xa", "ep_7m2c4vbn"], "beats": ["悬念钩"] }
   }],
   "props": [{
     "id": "P01", "name": "旧皮箱", "scale": "手持级",
@@ -22,7 +22,7 @@
     "states": [{ "state": "合上", "prompt": "the suitcase closed ..." }],
     "relatedScenes": ["S01"], "carriedBy": ["沈知微"],
     "image": { "prompt": "…", "negativePrompt": "…", "sheet": "…", "tags": [] },
-    "usage": { "episodes": [1, 6], "beats": ["悬念钩"] }
+    "usage": { "episodes": ["ep_k3f9q2xa", "ep_7m2c4vbn"], "beats": ["悬念钩"] }
   }]
 }
 ```
@@ -51,7 +51,7 @@
 | `image.tags` | 是 | 英文 | 标签数组：题材、材质、光照、色板。不打画风标，见 `scene-pass.md` |
 | `variantOf` | 否 | — | 变体的母场景 id。AI 生成一个新景很便宜，但**变体复用母场景资产更一致**——outline 里带 reusePlan 的场景优先做成变体 |
 | `changes` | variantOf 时必填 | 中文 | 相对母场景改了什么（换时段/换天气/换前景/删道具） |
-| `usage` | 否 | — | `{episodes, beats}`，seed 自动填，手写也行 |
+| `usage` | 否 | — | `{episodes, beats}`，seed 自动填，手写也行。`episodes` 是**集 id 数组**（`ep_…`，来自 outline.json），不是集号——大纲里插一集、集号后移，这里也不会指错集；报告给了 `--outline` 才显示成集号 |
 
 ## 单件道具（以校验器为准）
 
@@ -68,7 +68,7 @@
 | `image.prompt` | 是 | **英文** | 白底主视角，**必须带尺度短语、无人无手** |
 | `image.negativePrompt` | 是 | **英文** | **必须禁人且禁手**（hands/fingers） |
 | `image.sheet` | 是 | **英文** | 设定图版面指令，**必须写明 pure white background** + 同一套两档表面处理句之一 |
-| `usage` | 否 | — | `{episodes, beats}` |
+| `usage` | 否 | — | `{episodes, beats}`，`episodes` 同样是集 id 数组 |
 
 ## 硬规则（10 道质量门，全是代码）
 
