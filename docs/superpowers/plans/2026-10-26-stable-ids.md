@@ -73,11 +73,11 @@ for f in skills/*/scripts/selftest.mjs; do node "$f" | tail -1; done
 
 ## Task 4：novel-staging 3.0.0
 
-- **schema**：`scenes[].scene` 删掉，改成 `sceneRef`（`sc_`）；`ep` 保留，作为显示缓存。
+- **schema**：新增 `sceneRef`（`sc_`）作为身份；`ep`、`scene` 保留，作为显示缓存，由 `ids` 门对照剧本检查。
 - **seed**：照抄 `sceneRef`。
 - **validate `--script`**：按 id 查场次（替换 `novel-staging.mjs:460` 那一处按位置的查找）。
 - **门**：新增 `ids` 门（`sceneRef` 格式；给了 `--script` 时必须存在），门总数 8 → 9。
-- **标签**：`sceneLabel` 由文档内顺序（或剧本位置）推算。HTML 的 `id="sc-…"` 改用 `sceneRef`；`data-scene` 仍然是数组下标，只在页面内部使用，不导出。
+- **标签**：`sceneLabel` 不变（读显示缓存）；`data-scene` 仍然是数组下标，只在页面内部使用，不导出。
 - **命令**：`migrate <2.x staging> --script <3.0 script>`：用 `(ep, scene)` 在剧本里查到对应场次，改写成 `sceneRef`。
 - **样例**：迁移样例与 upstream 夹具。
 - **自测**：L202 那个按位置修改剧本的用例改成按 id；在剧本里插入一场后，站位仍然对得上原来那一场；页面算法重建测试不受影响。

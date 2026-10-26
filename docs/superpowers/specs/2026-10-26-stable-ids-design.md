@@ -84,9 +84,10 @@
 
 ### novel-staging
 
-- `scenes[].ep` + `scenes[].scene` 改成 `scenes[].sceneRef`（`sc_` id），并保留 `ep` 作为显示缓存。
-- `seed` 从剧本照抄 `sceneRef`；`validate --script` 按 id 找剧本场次。
-- 显示用的「第 N 集第 M 场」在给了 `--script` 时按剧本位置推算；没给时按站位文件内同一集的顺序推算。
+- 新增 `scenes[].sceneRef`（`sc_` id），这是身份；`ep`、`scene` 保留，作为显示缓存（报告、走位句、报错信息都使用它们）。
+- `seed` 从剧本照抄 `sceneRef`，同时写入 `ep` 和 `scene`；`validate --script` 按 `sceneRef` 找剧本场次，不再按位置查找。
+- `ids` 门：`sceneRef` 齐全、格式对、不重复；给了 `--script` 时必须存在于剧本，并且 `ep`、`scene` 与这一场在剧本里的实际位置一致。剧本里插了一场，站位的场号会过期，但门会把它报出来。
+- 不保留 `scene` 而按站位文件内的顺序推算是不行的：站位可能只排了其中几场，推算出来的场号会错。
 
 ### novel-storyboard
 
