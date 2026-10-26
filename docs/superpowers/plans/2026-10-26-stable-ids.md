@@ -37,12 +37,10 @@ for f in skills/*/scripts/selftest.mjs; do node "$f" | tail -1; done
 
 ## Task 1：novel-outline 3.0.0
 
-- **schema**：`episodes[].id`（`ep_`）必填；`beats[].episode` 改成 `beats[].episodeRef`。
-- **门**：
-  - 新增 `ids` 门：齐全、格式、唯一、`episodeRef` 指向存在的集。门总数 14 → 15。
-  - `beat-gap`、`major-early`、`refs`、节奏图、矩阵这些地方把 `b.episode` 改成"被引用那一集的位置 + 1"。抽一个 `episodeIndex(outline)` 帮手函数，统一提供 id → 位置的映射。
-- **命令**：`ids [--write]`、`renumber [--write]`、`migrate <2.x outline>`（补 `ep_` id，把 `beats[].episode` 按集号映射成 `episodeRef`）。
-- **资产清单**（`computeAssets`）：内部仍按集号输出，供显示使用；数据来源改成按 id 查位置。
+- **schema**：`episodes[].id`（`ep_`）必填；`beats[]` 增加 `episodeRef`（由 `ids` 按 `episode` 集号补上），`episode` 保留，作为作者写的集号和显示缓存。
+- **门**：新增 `ids` 门：分集 id 齐全、格式对、唯一；每个爽点的 `episodeRef` 都在、指向本大纲里的一集，并且那一集的 `ep` 等于 `episode`。门总数 14 → 15。其余门的集号算术不变（集号连续门 + ids 门保证集号等于位置）。
+- **命令**：`ids [--write] [--seed s]`、`renumber [--write]`、`migrate`（与 `ids` 相同）。
+- **资产清单**、渲染：不变，仍按集号显示。
 - **样例**：`examples/渡口-outline.json` 用 `migrate` 加固定种子转换一次后提交。
 - **自测**：
   - id 门的击穿用例：缺 id、格式错、重复、`episodeRef` 悬空。

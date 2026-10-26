@@ -56,8 +56,20 @@
 ### novel-outline
 
 - `episodes[].id`（`ep_`）必填。`ep` 保留，作为显示用的集号，门要求 `ep === 位置 + 1`（现有规则）。
-- `beats[].episode`（集号）改成 `beats[].episodeRef`（`ep_` id）。爽点间隔、major 时机这些门按被引用那一集在数组里的位置算。
-- 插入一集：在数组中间放一条不带 id 的分集，`ids` 补 id，`renumber` 按位置重写所有 `ep`。其他集的 id 和爽点引用都不受影响。
+- 爽点表写在分集之前（`--stage beats`），那时还没有集 id 可引用，所以：
+  - 作者照旧写 `beats[].episode`（集号）。
+  - 分集写出来以后，`ids` 按集号补上 `beats[].episodeRef`（`ep_` id）。
+  - 从此 `episodeRef` 是真相，`episode` 是显示缓存。
+  - `ids` 门检查 `episodeRef` 指向的那一集的 `ep` 等于 `episode`，手工改了集号却没改爽点会被拦下。
+- 插入一集：
+  - 在数组中间放一条不带 id 的分集，`ids` 补 id。
+  - 这时"集号从 1 连续"的门会报错，逼着运行 `renumber`：按位置重写所有 `ep`，并按 `episodeRef` 同步每个爽点的 `episode`。
+  - 其他集的 id 和爽点归属都不受影响。
+- 爽点间隔、major 时机这些门照旧按集号算：有了上面两道门，集号始终等于位置，算出来就是对的。
+
+**显示缓存模式**（剧本、站位、分镜里的 `ep` 同理）：
+- 凡是为了显示或作者方便而保留的编号字段，都必须有一道门检查它和 id 指向的真相一致。
+- 编号可以过期，但过期一定会被发现，不会悄悄生效。
 
 ### novel-art
 
@@ -99,7 +111,8 @@
 | 命令 | 作用 |
 | --- | --- |
 | `ids <file.json> [--write]` | 给缺 id 的条目补 id。只补不改；默认打印结果，`--write` 原地写回 |
-| `migrate <2.x 文件> [--outline/--script …] > 3.0 文件` | 把 2.x 文件转成 3.0：补 id，并把按位置的引用改写成按 id 的引用。迁移顺序固定：outline → art / script → staging / storyboard，下游迁移时必须给已迁移的上游文件 |
+| `migrate <2.x 文件> [--outline/--script …] > 3.0 文件` | 把 2.x 文件转成 3.0：补 id，并把按位置的引用改写成按 id 的引用。迁移顺序固定：outline → art / script → staging / storyboard，下游迁移时必须给已迁移的上游文件。outline 的 `migrate` 与 `ids` 相同 |
+| `--seed <文本>`（`ids` / `migrate` 的选项） | 用确定性随机源分配 id，同样的输入得到同样的 id。只用于样例和自测；真实项目不加，使用加密随机数 |
 | `renumber <outline.json> [--write]`（仅 outline） | 按位置重写 `ep` 显示集号 |
 
 `seed` 产出的骨架：从上游照抄的 id 原样保留；新条目（模型要写的场次、节拍、段、切）不带 id，写完运行 `ids --write`。
