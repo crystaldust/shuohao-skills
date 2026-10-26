@@ -16,7 +16,7 @@
 
 ![outline-report.html](assets/report.webp)
 
-## 质量门：14 道，全部是代码
+## 质量门：15 道，全部是代码
 
 这个 skill 的核心主张：**checklist 交给模型自觉是靠不住的**。所以每一道门都是 `validate` 里的确定性检查，不是给模型读的文字：
 
@@ -91,6 +91,9 @@ node scripts/novel-outline.mjs checkup outline.json             # 只跑质量�
 node scripts/novel-outline.mjs render outline.json --html       # 出报告（界面默认中文）
 node scripts/novel-outline.mjs render outline.json --html --lang en > outline-report.html   # 英文界面报告
 node scripts/novel-outline.mjs assets outline.json              # 资产清单 JSON
+node scripts/novel-outline.mjs ids outline.json --write         # 补集 id、按集号补爽点归属
+node scripts/novel-outline.mjs renumber outline.json --write    # 插入或删掉一集之后按位置重编集号
+node scripts/novel-outline.mjs migrate old.json --write         # 2.x 大纲迁移到 3.0
 ```
 
 ## 跟 novel-characters 的关系
@@ -104,8 +107,9 @@ node scripts/novel-outline.mjs assets outline.json              # 资产清单 J
 ```
 SKILL.md                 给 agent 读的工作流
 scripts/
-  novel-outline.mjs      chunk / validate / checkup / render / assets
-  selftest.mjs           249 项断言，不调模型
+  novel-outline.mjs      chunk / validate / checkup / render / assets / ids / renumber / migrate
+  ids.mjs                稳定 id（五个 skill 各有一份相同的副本）
+  selftest.mjs           287 项断言，不调模型
 references/
   schema.md              outline.json 结构 + 硬规则
   volume-pass.md         分卷摘要怎么写
@@ -124,6 +128,6 @@ assets/
 node scripts/selftest.mjs
 ```
 
-249 项断言，覆盖分卷 / 校验 / 质量门逐项击穿 / 资产汇总 / 渲染（中英两套界面）/ 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
+287 项断言，覆盖分卷 / 校验 / 质量门逐项击穿 / 资产汇总 / 渲染（中英两套界面）/ 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
 
 **只在 macOS + Node 24 上实测过。** 代码没有平台相关调用，Linux 和更低版本 Node 理论上没问题，但**没验过**。

@@ -6,6 +6,7 @@
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assignIds, collectIds, cryptoRng, duplicateIds, isId, seededRng } from './ids.mjs';
 
 /* ------------------------------------------------------------------ */
 /* 常量与阈值                                                           */
@@ -175,6 +176,57 @@ function thresholdsOf(outline) {
 /** 每集的正文字段，关键词扫描和对白检查都扫这三栏。 */
 const EP_TEXT_FIELDS = ['synopsis', 'hook', 'suspense'];
 
+/* ------------------------------------------------------------------ */
+/* 稳定 id                                                              */
+/* ------------------------------------------------------------------ */
+/*
+ * 爽点表写在分集之前（--stage beats），那时还没有集 id 可引用：作者照旧写集号，
+ * 分集写出来以后 ids 按集号补上 episodeRef。从此 episodeRef 是真相、episode 是显示缓存——
+ * 下面的门查两者一致，手工改了集号却没改爽点会被拦下。
+ * 插一集时「编号从 1 连续」那道校验先报错，逼着跑 renumber，按 episodeRef 一次改齐。
+ */
+
+function idProblems(eps, beats) {
+  const bad = [];
+  eps.forEach((e, i) => {
+    if (e?.id === undefined) bad.push(`第 ${i + 1} 集缺 id（运行 ids --write）`);
+    else if (!isId(e.id, 'ep')) bad.push(`第 ${i + 1} 集的 id「${e.id}」格式不对`);
+  });
+  for (const id of duplicateIds(eps.map((e) => e?.id).filter(Boolean))) bad.push(`集 id ${id} 重复`);
+  if (!eps.length) return bad;
+  const byId = new Map(eps.map((e) => [e?.id, e]));
+  for (const b of beats) {
+    if (b?.episodeRef === undefined) bad.push(`爽点 ${b?.id} 缺 episodeRef（运行 ids --write）`);
+    else if (!byId.has(b.episodeRef)) bad.push(`爽点 ${b?.id} 的 episodeRef 不在分集里`);
+    else if (byId.get(b.episodeRef).ep !== b.episode) {
+      bad.push(`爽点 ${b?.id} 写的是第 ${b.episode} 集，episodeRef 指向第 ${byId.get(b.episodeRef).ep} 集`);
+    }
+  }
+  return bad;
+}
+
+/** 给缺 id 的集补上 id，按集号给缺归属的爽点补上 episodeRef。已有的都不动，不改入参。 */
+export function assignOutlineIds(outline, rng = cryptoRng) {
+  const { items: episodes } = assignIds(outline?.episodes ?? [], 'ep', collectIds(outline), rng);
+  const byEp = new Map(episodes.filter((e) => isId(e?.id, 'ep')).map((e) => [e.ep, e.id]));
+  // episodeRef 紧跟在 episode 后面：两个字段说的是同一件事，挨着才好对照
+  const withRef = (b, ref) =>
+    Object.fromEntries(Object.entries(b).flatMap(([k, v]) => (k === 'episode' ? [[k, v], ['episodeRef', ref]] : [[k, v]])));
+  const beats = (outline?.beats ?? []).map((b) =>
+    b?.episodeRef !== undefined || !byEp.has(b?.episode) ? b : withRef(b, byEp.get(b.episode)),
+  );
+  return { ...outline, episodes, ...(outline?.beats ? { beats } : {}) };
+}
+
+/** 按位置重写集号，并按 episodeRef 同步爽点的集号。只动编号，不碰 id。 */
+export function renumberOutline(outline) {
+  const episodes = (outline?.episodes ?? []).map((e, i) => ({ ...e, ep: i + 1 }));
+  const epOf = new Map(episodes.map((e) => [e.id, e.ep]));
+  const beats = (outline?.beats ?? []).map((b) => (epOf.has(b?.episodeRef) ? { ...b, episode: epOf.get(b.episodeRef) } : b));
+  const params = outline?.params && outline.params.episodes !== episodes.length ? { ...outline.params, episodes: episodes.length } : outline?.params;
+  return { ...outline, ...(params ? { params } : {}), episodes, ...(outline?.beats ? { beats } : {}) };
+}
+
 export function gateReport(outline) {
   const th = thresholdsOf(outline);
   const gates = [];
@@ -192,6 +244,10 @@ export function gateReport(outline) {
   // 都明说跳过而不是报错，否则每一份存量 outline.json 一升级就全红。
   const hasProps = Array.isArray(outline?.props);
   const props = hasProps ? outline.props : [];
+
+  // G0 稳定 id：集的身份是 id，集号是显示缓存；爽点按 episodeRef 归属，集号必须跟它一致
+  const idBad = idProblems(eps, beats);
+  add('ids', 'id 齐全且一致（集 id、爽点归属）', eps.length > 0 && idBad.length === 0, idBad.join('；'));
 
   // G1a–G1c 角色分档上限。主角组还要求至少 1 人——没有主角的剧不成立
   const tierCap = { lead: th.maxLeads, support: th.maxSupport, functional: th.maxFunctional };
@@ -585,6 +641,7 @@ export function computeAssets(outline) {
  * 这里做展示层翻译——gateReport 的逻辑与中文诊断文案一行不动（CLI 仍是中文）。
  * 动态阈值由门自己算，映射里只写固定语义；未命中的 id 回落到原标签。 */
 const GATE_LABELS_EN = {
+  'ids': 'IDs complete and consistent (episode IDs, beat ownership)',
   'lead-cap': 'Leads {0}–{1}',
   'support-cap': 'Named supporting cast ≤ {0}',
   'functional-cap': 'Functional roles ≤ {0}',
@@ -1566,7 +1623,13 @@ const USAGE = `novel-outline.mjs — novel-outline skill 的确定性工具
          [--lang zh|en]               报告界面语言：--lang 优先，其次 outline.json 的
                                       lang 字段，默认 zh；数据内容不翻译
   assets <outline.json>               打印自动汇总的资产清单 JSON
+  ids <outline.json> [--write]        给缺 id 的集补集 id、按集号给爽点补 episodeRef；已有的不动
+      [--seed <文本>]                 用确定性随机源（只用于样例与自测，真实项目不加）
+  renumber <outline.json> [--write]   按位置重写集号，爽点集号按 episodeRef 同步（插入一集之后运行）
+  migrate <2.x outline.json>          把 2.x 大纲迁移到 3.0（等同 ids），选项同 ids
   slug <name>                         书名转安全文件名
+
+  ids / renumber / migrate 默认把结果打印到 stdout，加 --write 原地写回
 
 chunk 选项：
   --per-volume <n>   每卷章数，默认 ${DEFAULT_PER_VOLUME}`;
@@ -1578,6 +1641,17 @@ function readJson(path) {
 function flag(rest, name, fallback = null) {
   const i = rest.indexOf(name);
   return i >= 0 && rest[i + 1] ? rest[i + 1] : fallback;
+}
+
+/** 与样例文件同一个格式写回（2 空格缩进 + 结尾换行），git diff 只显示真正的改动。 */
+function writeOrPrint(path, doc, write, note) {
+  const text = JSON.stringify(doc, null, 2) + '\n';
+  if (!write) {
+    process.stdout.write(text);
+    return;
+  }
+  writeFileSync(resolve(path), text, 'utf8');
+  console.error(note);
 }
 
 function main(argv) {
@@ -1645,6 +1719,25 @@ function main(argv) {
     const [path] = rest;
     if (!path) throw new Error('用法：assets <outline.json>');
     console.log(JSON.stringify(computeAssets(readJson(path)), null, 2));
+    return;
+  }
+
+  if (cmd === 'ids' || cmd === 'migrate') {
+    const [path] = rest;
+    if (!path) throw new Error(`用法：${cmd} <outline.json> [--write] [--seed <文本>]`);
+    const seed = flag(rest, '--seed');
+    const before = readJson(path);
+    const after = assignOutlineIds(before, seed ? seededRng(seed) : cryptoRng);
+    const eps = (after.episodes ?? []).filter((e, i) => before.episodes?.[i]?.id === undefined && e?.id !== undefined).length;
+    const owners = (after.beats ?? []).filter((b, i) => before.beats?.[i]?.episodeRef === undefined && b?.episodeRef !== undefined).length;
+    writeOrPrint(path, after, rest.includes('--write'), `✓ 补了 ${eps} 个集 id、${owners} 个爽点归属`);
+    return;
+  }
+
+  if (cmd === 'renumber') {
+    const [path] = rest;
+    if (!path) throw new Error('用法：renumber <outline.json> [--write]');
+    writeOrPrint(path, renumberOutline(readJson(path)), rest.includes('--write'), '✓ 已按位置重写集号');
     return;
   }
 

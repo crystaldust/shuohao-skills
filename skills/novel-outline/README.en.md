@@ -18,7 +18,7 @@ Outputs `outline.json`, a Markdown report, and a self-contained `outline-report.
 
 ## The quality gates are code
 
-The core stance of this skill: **a checklist the model grades itself on is worthless.** All 14 gates are deterministic checks in `validate`, not prose for the model to read — per-tier cast caps (leads 1–5, supporting ≤ 10, functional ≤ 10), a narrative-prop cap (≤ 8; `props` is optional and the gate says so when absent), a primary-scene cap that **scales with episode count** (4 + ⌈episodes/10⌉ clamped to 5–15 — tuned for AI production, where scenes are generated and the cap guards consistency assets rather than set-building money), reuse plans for one-off scenes, beat gaps, episode-1 hook, major-beat timing, three-fields-per-episode, crowd-scene plans, risk keywords flagged, reference integrity (no jobless characters, no unused scenes, no unused props, no dangling IDs), and no quoted dialogue in synopses.
+The core stance of this skill: **a checklist the model grades itself on is worthless.** All 15 gates are deterministic checks in `validate`, not prose for the model to read — per-tier cast caps (leads 1–5, supporting ≤ 10, functional ≤ 10), a narrative-prop cap (≤ 8; `props` is optional and the gate says so when absent), a primary-scene cap that **scales with episode count** (4 + ⌈episodes/10⌉ clamped to 5–15 — tuned for AI production, where scenes are generated and the cap guards consistency assets rather than set-building money), reuse plans for one-off scenes, beat gaps, episode-1 hook, major-beat timing, three-fields-per-episode, crowd-scene plans, risk keywords flagged, reference integrity (no jobless characters, no unused scenes, no unused props, no dangling IDs), and no quoted dialogue in synopses.
 
 Why tiers instead of one flat cap: a flat cap conflates *who the audience must remember* with *how many consistent faces production must maintain*. The lead cap guards screen time and memory; the support/functional caps guard **AI character-asset cost** — and the asset list converts tiers into workload automatically (leads → full model sheets, supporting → bust references, functional → prompt-only). Unnamed extras stay off the table entirely. Functional roles legitimately have no arc — the doctor is there to stitch a wound.
 
@@ -61,6 +61,18 @@ node scripts/novel-outline.mjs render outline.json --html > outline-report.html
 
 Failing gates don't block rendering — showing the problems is the point.
 
+## Stable episode IDs
+
+An episode's identity is its `id` (`ep_` plus 8 characters), assigned by the script — never written by the model, never changed once assigned. The episode number `ep` is only a display label that must equal the array position. Downstream skills (script, art, staging, storyboard) join on the id, so inserting an episode never silently re-points anything.
+
+```bash
+node scripts/novel-outline.mjs ids outline.json --write        # assign episode IDs, bind each beat to its episode (episodeRef)
+node scripts/novel-outline.mjs renumber outline.json --write   # after inserting/removing an episode: renumber by position
+node scripts/novel-outline.mjs migrate old.json --write        # migrate a 2.x outline (same as ids)
+```
+
+Beats are planned before episodes exist, so authors keep writing the episode number in `episode`; `ids` binds `episodeRef` afterwards, and the `ids` gate checks the two agree.
+
 ## Long texts
 
 An 800k-character novel doesn't fit in context. `chunk` splits by chapter headings into volumes (15 chapters each by default), each volume summarised concurrently, then merged. Caps at 60 volumes and reports `truncated` explicitly — it never drops the tail silently. Key decisions must point back at the source (`keep[].evidence`, verbatim) — **no inventing content from the title**.
@@ -77,6 +89,6 @@ novel-outline owns adaptation structure (cutting, merging, beat placement, episo
 node scripts/selftest.mjs
 ```
 
-249 assertions — chunking, validation, gate-defeating cases, asset aggregation, rendering (both UI languages), export. No model calls, runs in about a second.
+287 assertions — chunking, validation, gate-defeating cases, asset aggregation, rendering (both UI languages), export. No model calls, runs in about a second.
 
 **Only tested on macOS + Node 24.**

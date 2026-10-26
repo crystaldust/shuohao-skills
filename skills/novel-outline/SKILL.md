@@ -1,10 +1,10 @@
 ---
 name: novel-outline
-version: 2.0.0
+version: 3.0.0
 description: |
   把一本小说改编成短剧大纲五件套：改编说明、人物表、爽点表、分集梗概、资产清单，
   产出 outline.json + Markdown + 单页评审报告（KPI 带、关键决策、爽点时间轴、调度矩阵、场景概览、质量门）。
-  14 道质量门全部由脚本确定性检查（角色分档上限、主场景上限随集数动态、爽点间隔≤3集、每集钩子悬念必填……），不靠模型自觉；
+  15 道质量门全部由脚本确定性检查（角色分档上限、主场景上限随集数动态、爽点间隔≤3集、每集钩子悬念必填……），不靠模型自觉；
   支持体检模式：贴一份现成大纲进来，只跑质量门给诊断。
   零依赖、零 API key，用当前会话额度。
   Use when asked to 改编大纲、短剧大纲、拆大纲、小说转短剧、adaptation outline。
@@ -106,7 +106,13 @@ node {baseDir}/scripts/novel-outline.mjs validate <workdir>/outline.json --stage
 
 **每批 ≤ 10 集**，能并发就并发。每个子代理拿到：拍板后的骨架四块、自己负责的集数区间、区间内的爽点，读 `{baseDir}/references/episode-pass.md` 照着写，产出写到 `<workdir>/eps-NN.json`。
 
-合并时按 ep 排序拼进 outline.json 的 `episodes`。
+合并时按 ep 排序拼进 outline.json 的 `episodes`，然后补 id：
+
+```bash
+node {baseDir}/scripts/novel-outline.mjs ids <workdir>/outline.json --write
+```
+
+给每一集分配集 id（`ep_` 开头），并按集号给爽点补上 `episodeRef`。**id 由程序分配，不要自己编**；已有的 id 永远不改。之后要在中间插一集：把新的一集放进数组（不写 id），再运行一次 `ids --write`，接着运行 `renumber --write` 按位置重编集号——爽点会跟着原来那一集走。
 
 ### Step 6 — 校验 ⛔ 不能跳
 
@@ -114,7 +120,7 @@ node {baseDir}/scripts/novel-outline.mjs validate <workdir>/outline.json --stage
 node {baseDir}/scripts/novel-outline.mjs validate <输出目录>/<书名>-outline.json
 ```
 
-14 道质量门全部是代码，不是给你读的清单：主角组 1–5 人、重要配角 ≤ 10、功能性角色 ≤ 10、主场景不超上限（随集数动态，60 集 → 10）、叙事道具 ≤ 8 件、一次性场景有规避方案、爽点间隔 ≤ 3 集无真空、第 1 集有钩子、大爆点不压最后一集、每集三栏齐全、三人同框有拆解、生成难点进预警、引用完整无失业角色无空转场景无零集道具、叙述体无对白。
+15 道质量门全部是代码，不是给你读的清单：集 id 齐全且爽点归属一致、主角组 1–5 人、重要配角 ≤ 10、功能性角色 ≤ 10、主场景不超上限（随集数动态，60 集 → 10）、叙事道具 ≤ 8 件、一次性场景有规避方案、爽点间隔 ≤ 3 集无真空、第 1 集有钩子、大爆点不压最后一集、每集三栏齐全、三人同框有拆解、生成难点进预警、引用完整无失业角色无空转场景无零集道具、叙述体无对白。
 
 **有违规逐条修，改完重跑，直到通过。**
 
@@ -171,7 +177,7 @@ node {baseDir}/scripts/novel-outline.mjs render <outline.json> --html > outline-
 node {baseDir}/scripts/selftest.mjs
 ```
 
-249 项断言，不调模型、不花额度。14 道质量门每一道都有击穿用例——证明它真的会拦。改完脚本先跑这个。
+287 项断言，不调模型、不花额度。15 道质量门每一道都有击穿用例——证明它真的会拦。改完脚本先跑这个。
 
 ## 自带样例
 
