@@ -110,7 +110,7 @@ node scripts/report.mjs --from <demo目录> --out report.html
 
 - **样式串味**。五份报告共用 57 个类名，其中 13 个同名不同定义（`.copy` `.kpis` `.badge` `.chip`……），所以给每份样式的每条选择器加作用域前缀
 - **脚本串味**。各报告的脚本都是 `document.querySelector('.expo')` 这种全局查询，合成一页后只会命中第一个——五个导出按钮会全废。做法是给每份脚本套一层作用域代理
-- **图片路径**。各报告的图相对自己那份 json 的目录（`images/…`、`E01-01/f1.png`），合成后按输出文件的位置重算
+- **图片路径**。各报告的图相对自己那份 json 的目录（`images/…`、`sg_x96b305w/ct_dfg1t316.png`），合成后按输出文件的位置重算
 
 默认一次显示一个面板（五份加起来将近六十万字符）。左下角「平铺全部」把所有面板同时展开，Cmd+F 恢复全局搜索。数字键 `1`–`5` 切面板，`#pane-script` 这样的深链可以直接分享到某一屏。
 
@@ -209,6 +209,8 @@ skills/<skill-name>/
 
 ```bash
 for f in skills/*/scripts/selftest.mjs; do node "$f"; done
+node scripts/ids-sync-selftest.mjs        # 五份 ids.mjs 副本逐字节相同
+node scripts/fixtures-sync-selftest.mjs   # 各 skill 的上游夹具与上游样例逐字节相同
 ```
 
 没有配 CI——自测足够快（1 秒），本地跑一次比等 CI 更省事。**只在 macOS + Node 24 上验过**；代码没有平台相关调用，Linux 和更低版本 Node 理论上没问题，但没验。
@@ -226,8 +228,8 @@ for f in skills/*/scripts/selftest.mjs; do node "$f"; done
 ├── staging/       ← novel-staging 产出：staging-report.html（主交付）+ staging.json；Markdown 按需导出
 ├── storyboard/    ← novel-storyboard 产出：<剧>-storyboard.json / .md / -report.html
 │   ├── manifest.json  ← export 产出
-│   ├── E01-01/        ← export 的分镜投产包，每段一个文件夹（prompt.md + f1..fN.png）
-│   ├── E01-02/
+│   ├── sg_x96b305w/   ← export 的分镜投产包，每段一个文件夹，按段 id 命名（prompt.md + <切 id>.png）
+│   ├── sg_…/
 │   └── …
 ├── docs/          ← 自己写的使用说明、PR 草稿等（与机器产物解耦）
 └── scripts/       ← 跑管线的辅助脚本（探索期脚本用 _ 前缀保留溯源）
@@ -236,7 +238,7 @@ for f in skills/*/scripts/selftest.mjs; do node "$f"; done
 约定要点：
 
 - **每个 skill 一个目录**，存放它自己的 `json` / `md` / `html` 三件套，加新角色/场景只往对应目录放，不污染根目录
-- **分镜的 `manifest.json` 与 `E01-0x/` 投产包一起归 `storyboard/`**，就是 `export --out storyboard` 的原样产出。**段文件夹不要再往下收一层**（例如收进 `segments/`）：分镜报告里的图走相对路径 `<段号>/f<切序>.png`，默认要求报告 html 与段文件夹同级（放在别处就用 `render --frames <目录>` 指过去），多套一层目录又不指，报告里的图会**静默**全变成「未生成」占位——实测把 10 个段文件夹移进 `segments/` 之后，内嵌图从 2 张变 0 张，报告不会报错
+- **分镜的 `manifest.json` 与 `sg_…/` 投产包一起归 `storyboard/`**，就是 `export --out storyboard` 的原样产出。**段文件夹不要再往下收一层**（例如收进 `segments/`）：分镜报告里的图走相对路径 `<段 id>/<切 id>.png`，默认要求报告 html 与段文件夹同级（放在别处就用 `render --frames <目录>` 指过去），多套一层目录又不指，报告里的图会**静默**全变成「未生成」占位——实测把 10 个段文件夹移进 `segments/` 之后，内嵌图从 2 张变 0 张，报告不会报错
 - **报告 HTML 与生成的图/视频可由 `render` 重跑再生**——进版本控制时建议只提交 `json` / `md` / `docs` / `scripts`，报告 HTML 和分镜 `png` 用 `.gitignore` 排除，保持仓库轻量
 - 用法类文档（如各报告的使用说明）放 `docs/`，与 skill 自动生成的产物分开，方便单独维护
 

@@ -109,7 +109,7 @@ Merging solves three problems, **all of them inside the assembler, none inside t
 
 - **Style bleed.** The five reports share 57 class names, 13 of which mean different things in different reports (`.copy`, `.kpis`, `.badge`, `.chip`…), so every selector gets a scope prefix
 - **Script bleed.** Each report's script does document-wide lookups like `document.querySelector('.expo')`. Merged, that only ever finds the first one — all five export buttons would break. Each script gets wrapped in a scoping proxy
-- **Asset paths.** Each report's images are relative to its own json directory (`images/…`, `E01-01/f1.png`) and get rebased against the output file
+- **Asset paths.** Each report's images are relative to its own json directory (`images/…`, `sg_x96b305w/ct_dfg1t316.png`) and get rebased against the output file
 
 One pane shows at a time by default (the five together run to roughly 600k characters). "Show all" in the bottom-left expands every pane so Cmd+F reaches the whole document. Number keys `1`–`5` switch panes, and `#pane-script` deep-links straight to one.
 
@@ -210,6 +210,8 @@ Run every self-test before adding a skill:
 
 ```bash
 for f in skills/*/scripts/selftest.mjs; do node "$f"; done
+node scripts/ids-sync-selftest.mjs        # the five copies of ids.mjs are byte-identical
+node scripts/fixtures-sync-selftest.mjs   # every upstream fixture matches the upstream example byte for byte
 ```
 
 There is no CI — the self-tests run in about a second, so running them locally beats waiting on a pipeline. **Only tested on macOS with Node 24**; there is no platform-specific code, so Linux and older Node releases should be fine, but that is unverified.
