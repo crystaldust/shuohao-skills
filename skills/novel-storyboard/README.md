@@ -9,7 +9,7 @@
 ```
 段（segment）＝ 一次视频生成调用，≤ 15 秒，不跨场次
  ├─ 分镜（cut）× 3–5 ＝ 段内剪切，每切 2–5 秒（硬门），各自认领剧本节拍
- ├─ 分镜图 ＝ 每切一张关键帧（<段号>/f1..fN.png）：主图钉 0.00 秒，子图钉各自切点
+ ├─ 分镜图 ＝ 每切一张关键帧（<段 id>/<切 id>.png）：主图钉 0.00 秒，子图钉各自切点
  └─ H3 提示词 ＝ 一段一条，多图对齐指令 + [Shot k] 切点时刻逐字对账
 ```
 
@@ -28,13 +28,13 @@
 
 | 门 | 规则 |
 | --- | --- |
-| **节拍全覆盖** | 剧本每个节拍被恰好一个分镜认领、按顺序、连续、不跨场 |
+| **id 齐全且一致** | 集 id 照抄剧本，段 id（`sg_`）、切 id（`ct_`）由程序分配；`sceneRef` 指向剧本场次 id、`beatIds` 逐拍列出节拍 id，给了剧本就逐个核对 |
+| **节拍全覆盖** | 剧本每个节拍 id 被恰好一个分镜认领、按顺序、不跨场——漏拍、重拍、乱序、认领别场的拍各报各的 |
 | 段时长 | 0 < Σ分镜 ≤ 15 秒（一次生成的上限，`params.maxSegmentSeconds` 按模型改） |
 | **分镜时长** | 每切 2–5 秒——3 秒左右的短剧节奏是**硬门**不是建议 |
 | 台词装得下 | 认领节拍的台词秒数 ≤ 分镜秒数，逐切检查 |
 | 每集总时长 | Σ段 落在剧本 `targetSeconds` ±15% 内 |
 | 同框上限 | 单个分镜 ≤ 3 人，超了必须带拆解说明 |
-| 段号纪律 | `E01-01` 格式、按顺序连号——段号就是素材文件名 |
 | 景别词 | 「特写」这类中文景别词必须出现在分镜图提示词里 |
 | 运镜词表 | 运镜直接用 H3 官方词表（`Push In` / `Pan Left` / `Tracking Shot`…），且必须出现在**自己的 [Shot k] 段落**里 |
 | **H3 结构** | 首行对齐指令**由分镜结构按语言推导、逐字对账**；三字段按序；每个 `[Shot k]` 的切点时刻等于前面分镜秒数的累计 |
@@ -79,7 +79,7 @@ node scripts/novel-storyboard.mjs stats
 - **分镜节奏带**（招牌图）：每集一行色带，**粗分隔 = 段边界（一次生成）**，片宽 = 分镜时长占比、颜色深浅 = 景别远近——深浅相间、长短相间就是好节奏；点一片跳到那张段卡
 - **分集分镜表**：每段一张卡——**主分镜图**按顶层 `aspectRatio` 排版（默认 16:9，竖屏剧 9:16；旧数据的 `_meta.orientation` 与 frame 末尾标签只作兼容）（缺图显示提示词占位，**不装有**）、**子分镜条**缩略格、下方**五五分栏**：左列逐切分镜行（起点秒 · 秒数 · 景别 · 运镜 · 配方 · 画面摘要**从剧本认领的节拍自动带出**），右列 H3 提示词面板——逐镜换行直接可读，一键复制
 - **生成批次单**：同场景 + 同光照的段归一批，共用同一张环境参考图——批次卡嵌场景设定图，列出需要的角色设定图和道具
-- **配音对齐单**：每句台词对到**段号#切序**——TTS 音频贴到哪一段的第几切，全自动
+- **配音对齐单**：每句台词对到**段标签#切序**（链接按段 id 跳转）——TTS 音频贴到哪一段的第几切，全自动
 - **质量门**面板 + 页眉徽章 + **导出 JSON**（下载的就是 `storyboard.json` 原样）
 - 全部图形内联 CSS/SVG，零外部依赖，离线双击能开
 - 报告界面默认中文，`render --lang en` 输出全英文界面（内置 zh / en 两套）——只切界面标签，与 `promptLang`（H3 提示词语言，默认英文）互相独立。英文界面下质量门标签同样翻译（阈值原样），门的失败详情与数据内容保持原文
@@ -112,9 +112,11 @@ node scripts/novel-storyboard.mjs render sb.json --html \
 node scripts/novel-storyboard.mjs render sb.json --html --lang en \
      --script script.json --outline outline.json --art art.json > storyboard-report.html   # 英文界面报告
 node scripts/novel-storyboard.mjs export sb.json --script script.json   # H3 投产包
+node scripts/novel-storyboard.mjs ids sb.json --script script.json --write   # 补段 id、切 id（集 id 照抄剧本）
+node scripts/novel-storyboard.mjs migrate old.json --script script.json --write   # 2.x 迁移到 3.0
 ```
 
-`export` 的投产结构固定：**每段一个文件夹** `E01-01/`——分镜图 `f1..fN.png` 和 `prompt.md` 同住（头部 Picture ↔ 文件对照表**明确 f1.png 是首帧**、各图钉在第几秒，分隔线以下是 h3Prompt 原样），根部 `manifest.json` 带 Picture 序图清单、切点时刻表、缺图标注。一个段文件夹 = 一次 H3 生成的全部材料。
+`export` 的投产结构固定：**每段一个文件夹**，按段 id 命名（`sg_x96b305w/`）——分镜图按切 id 命名（`ct_dfg1t316.png`），和 `prompt.md` 同住（头部写明段标签 `E01-01`，Picture ↔ 文件对照表**明确哪张是首帧**、各图钉在第几秒，分隔线以下是 h3Prompt 原样），根部 `manifest.json` 每段带段 id、段标签、顺序、Picture 序图清单、切点时刻表、缺图标注。插段、重排之后标签会变，文件夹和图片名不变，已生成的素材照样对得上。一个段文件夹 = 一次 H3 生成的全部材料。
 
 ## 边界
 
@@ -129,8 +131,9 @@ node scripts/novel-storyboard.mjs export sb.json --script script.json   # H3 投
 ```
 SKILL.md                 给 agent 读的工作流
 scripts/
-  novel-storyboard.mjs   seed / validate / checkup / render / export / slug
-  selftest.mjs           336 项断言，不调模型
+  novel-storyboard.mjs   seed / ids / migrate / validate / checkup / render / export / stats / slug
+  ids.mjs                稳定 id（与另外四个 skill 的副本逐字节相同）
+  selftest.mjs           406 项断言，不调模型
 references/
   schema.md              storyboard.json 结构 + 时长约束链
   h3-prompt.md           H3 提示词写法规范（官方方法论内化版）
@@ -149,6 +152,6 @@ assets/
 node scripts/selftest.mjs
 ```
 
-336 项断言，覆盖节拍展开 / H3 骨架推导 / Seedance 拼装 / 统计与批次 / 质量门逐项击穿 / 配方卡库解析与挂载 / seed / 渲染（含中英界面、图位画幅）/ H3 与 Seedance 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
+406 项断言，覆盖节拍展开 / 稳定 id 与 2.x 迁移 / H3 骨架推导 / Seedance 拼装 / 统计与批次 / 质量门逐项击穿 / 配方卡库解析与挂载 / seed / 渲染（含中英界面、图位画幅）/ H3 与 Seedance 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
 
 **只在 macOS + Node 24 上实测过。** 代码没有平台相关调用，Linux 和更低版本 Node 理论上没问题，但**没验过**。

@@ -4,7 +4,7 @@
 
 - **段** = 一次视频生成调用，总时长 ≤ `maxSegmentSeconds`（默认 15 秒），不跨场次——换景必开新段
 - **分镜** = 段内的一次剪切，`minCutSeconds`–`maxCutSeconds`（默认 2–5 秒），各自认领剧本节拍、带景别运镜和一张分镜图
-- **分镜图** = 每个分镜一张关键帧：第 1 切的是**主分镜图**（钉在 0.00 秒），其余是**子分镜图**（各钉在自己的切点时刻）。**每段一个文件夹**：`<段号>/f<切序>.png` + `prompt.md`（export 生成，内容就是 h3Prompt）
+- **分镜图** = 每个分镜一张关键帧：第 1 切的是**主分镜图**（钉在 0.00 秒），其余是**子分镜图**（各钉在自己的切点时刻）。**每段一个文件夹**：`<段 id>/<切 id>.png` + `prompt.md`（export 生成，头部是 Picture ↔ 文件对照表，分隔线以下是 h3Prompt 原样）
 
 ```json
 {
@@ -12,7 +12,7 @@
   "aspectRatio": "16:9",
   "promptLang": "zh",
   "params": { "maxSegmentSeconds": 15, "minCutSeconds": 2, "maxCutSeconds": 5, "maxOnScreen": 3, "tolerance": 0.15 },
-  "episodes": [ { "ep": 1, "segments": [ ... ] } ]
+  "episodes": [ { "id": "ep_mtg51p27", "ep": 1, "segments": [ ... ] } ]
 }
 ```
 
@@ -20,16 +20,18 @@
 
 `promptLang` 可省略（**默认 `en`——官方规范口径**）：整条英文，台词在 `<d>[Chinese]` 里保留原文。设成 `zh` 可切整条中文（对齐指令、字段名、镜头标记都有中文版）——偏离官方推荐的备选项。**禁角色名不跟着语言变**：两种模式的 H3 正文都用通用身份。
 
+`episodes[].id` 是集 id，**照抄 script.json 那一集的 id**（seed 自动带上）；`ep` 是显示用的集号，给了 `--script` 时 `ids` 门检查它跟剧本一致。
+
 **Seedance 视频提示词不存在 JSON 里**：它由程序从 `shot`、构图量化字段、`blocking`、`soundscape`、`music` 和剧本台词现拼（结构见 `references/seedance-prompt.md`），报告和 `export --protocol seedance` 都用同一个拼法。
 
 ## segment（段）
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `id` | string | 段号 `E01-01`：集号 + 两位序号，**按顺序连号**。它就是素材文件名（`E01-01.mp4` / `E01-01-f1.png`） |
-| `sceneIndex` | int | 这一段在剧本该集的第几场（1 起）。段内全部分镜同场 |
+| `id` | string | 段 id（`sg_…`），**由 `ids` 分配，不要手写**。导出的段文件夹按它命名；「E01-02」这类段标签按位置推算，只用于显示 |
+| `sceneRef` | string | 这一段属于剧本哪一场：剧本场次 id（`sc_…`），从 `seedScenes` 照抄。段内全部分镜同场 |
 | `cuts` | cut[] | 段内分镜，按时间顺序。段总秒数 = 分镜秒数之和，**不单独存**——少一处会漂的冗余 |
-| `h3Prompt` | string | **一段一条 H3 视频提示词**，正文语言跟 `promptLang`（默认中文），结构见 `references/h3-prompt.md` |
+| `h3Prompt` | string | **一段一条 H3 视频提示词**，正文语言跟 `promptLang`（默认英文），结构见 `references/h3-prompt.md` |
 | `blocking` | string | **人物关系与构图逻辑**：开场那一瞬谁在画面左、谁在右、面朝哪、相距多远（厘米或步数）。一段一份，各镜从它出发。纯参考图出片时这是唯一说清「人在哪」的地方。**必填**（`composition` 门） |
 | `soundscape` | string | **Seedance 用的音景**（中文）：环境声、动作声、非语言人声，不复述台词。程序套上 `<>`，字段里别自己写 |
 | `music` | string | **Seedance 用的配乐**（中文），写配器与速度。没有就省略这个字段。程序套上 `（）` |
@@ -39,7 +41,8 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
-| `beats` | [int, int] | 认领该场第几拍到第几拍（含两端）。**每个节拍必须被恰好一个分镜认领**，按顺序、连续 |
+| `id` | string | 切 id（`ct_…`），**由 `ids` 分配，不要手写**。分镜图按它命名（`<段 id>/<切 id>.png`）；「#3」这类切号按位置推算 |
+| `beatIds` | string[] | 认领的节拍 id（`bt_…`），**逐拍列出**，从 `seedScenes` 照抄，不写区间。全场各切的 `beatIds` 连起来必须恰好等于剧本这一场的节拍 id 序列：**每个节拍被恰好一个分镜认领**，按顺序 |
 | `seconds` | number | 分镜时长，2–5 秒——短剧的注意力节奏是硬门。认领节拍的台词秒数必须装得下 |
 | `size` | enum | 景别：`extreme-wide` 大远景 / `wide` 全景 / `medium` 中景 / `close` 特写 / `extreme-close` 大特写 |
 | `camera` | enum | 运镜，**直接用 H3 官方词表**（原样字符串）：`Static Shot` `Push In` `Pull Out` `Zoom In/Out` `Pan Left/Right` `Truck Left/Right` `Tilt Up/Down` `Pedestal Up/Down` `Arc Shot` `Tracking Shot` `Shake Slightly/Strongly` `POV` `Roll Clockwise/Counterclockwise` |
@@ -83,6 +86,18 @@ non_diegetic_music: …（1–3 句，没有就 N/A）
 3. **每个 `[Shot k]`（k ≥ 2）必须带切点时刻 `At 00:0X.XXX,`，且等于前面分镜秒数的累计**——节奏写在纸上就必须和提示词一致
 4. 认领节拍的每句台词**逐字**进 `<d>[Chinese] …</d>`；说话人身份音色语气用英文写在 `<d>` 外；画外音用 `says in an off-screen voiceover` 并注明唇形闭合
 5. `<d>` 块之外的正文语言与 `promptLang` 一致（中文写成英文、英文混进中文都拦）；两种模式都禁角色名（官方规范，不跟着语言变）；每个分镜的运镜词（中文用词表中文词如「推」「固定」，英文用官方词）必须出现在**自己的 [Shot k] 段落**里
+
+## 稳定 id
+
+顺序只看数组位置，身份是 id：
+
+- 集 `id` 照抄剧本；段 `sg_…`、切 `ct_…` 由 `ids --write` 分配，**切镜时不写**，已有的永远不改
+- `sceneRef`、`beatIds` 引用剧本的场次 id 和节拍 id，从 `seedScenes` 照抄
+- **显示标签**：段标签 `E01-02` = 集号 + 段在这一集里的位置，切号 `#3` = 切在段内的位置。报告、对白表、门的提示信息用它们；导出的文件夹、图片名和 `manifest.json` 的 `segment` 用 id，`label` 与 `order` 只是显示
+- **剧本插一拍**：覆盖门点名「第 N 拍（bt_…）没人认领」，把它的 id 加进对应那一切的 `beatIds`（或新切一镜，不写 id，再运行 `ids --write`）
+- **插一段、重排**：直接改 `segments` 数组，运行 `ids --write` 只给新的段补 id；已生成的素材按段 id、切 id 对回，不受影响
+- `migrate <2.x storyboard.json> --script <3.0 script.json>`：`sceneIndex` → `sceneRef`，`beats [起, 止]` → 逐拍的 `beatIds`，补集、段、切 id
+- `--seed <文本>` 让 id 可复现，**只用于样例与自测**
 
 ## 时长约束链
 

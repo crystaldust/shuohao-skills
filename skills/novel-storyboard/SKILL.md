@@ -1,6 +1,6 @@
 ---
 name: novel-storyboard
-version: 2.0.0
+version: 3.0.0
 description: |
   给 AI 短剧出分镜：三层结构——段（一次视频生成，≤15 秒）→ 分镜（段内 2–5 秒的剪切，认领剧本节拍）
   → 分镜图（每切一张关键帧：主分镜图钉 0.00 秒，子分镜图钉各自切点）。
@@ -9,7 +9,7 @@ description: |
   references/h3-prompt.md，不依赖外部 skill）。
   产出 storyboard.json + Markdown + 单页评审报告（分镜节奏带 / 分集分镜表 / 生成批次单 /
   配音对齐单，含导出 JSON）。不出图——交付的是每格的画面提示词和它该挂哪些参考图。
-  18 道质量门全部由脚本确定性检查（第 18 道 shot-recipe 可选：挂上 shot-recipes 卡库才查，不挂就明说跳过）；
+  18 道质量门全部由脚本确定性检查（第 1 道 ids：集、段、切都有程序分配的 id，按剧本场次 id 与节拍 id 认领；第 18 道 shot-recipe 可选：挂上 shot-recipes 卡库才查，不挂就明说跳过）；
   export 一键导出 H3 投产包（每段提示词 + 按 Picture 序的分镜图清单）。零依赖、零 API key，用当前会话额度。
   Use when asked to 分镜、出分镜、镜头表、切镜、storyboard for AI short drama。
 allowed-tools:
@@ -41,11 +41,11 @@ metadata:
 
 给 AI 短剧出**分镜**——管线里第一个直接面对视频模型的层。**前提刻在骨子里：镜头是生成出来的，多切一镜的成本几乎为零**，所以这里不心疼镜头数量，上限只有一个：视频模型单段生成的时长（默认 15 秒）。
 
-**核心机制：镜头认领节拍。** 每个镜头声明它覆盖剧本某场的哪几个连续节拍（`sceneIndex` + `beats: [起, 止]`），镜头不许跨场次——换景必换镜。这让分镜和剧本的关系变成可机械对账的：
+**核心机制：镜头认领节拍。** 每段用 `sceneRef` 指向剧本的场次 id，每切用 `beatIds` 逐拍列出它认领的节拍 id，镜头不许跨场次——换景必换镜。段和切也各有程序分配的 id（`sg_` / `ct_`），导出的文件夹和分镜图按 id 命名；「E01-02」「#3」这类编号按位置推算，只用于显示。剧本里插一拍、分镜里插一段或重排，认领和已生成的素材都不会悄悄挂错。这让分镜和剧本的关系变成可机械对账的：
 
 | 交付 | 解决什么 |
 | --- | --- |
-| 节拍认领 | 每个节拍被恰好一个镜头认领、顺序不乱——剧本改了重跑 validate，失效的镜头当场点名 |
+| 节拍认领 | 每个节拍 id 被恰好一个镜头认领、顺序不乱——剧本改了重跑 validate，新插的节拍、失效的认领当场点名 |
 | 单镜头 ≤ 15 秒 | AI 视频单段生成上限，长对话在这里被强制拆镜（`params.maxShotSeconds` 按模型改） |
 | 台词装得下 | 认领节拍的台词秒数 ≤ 镜头秒数——逐镜检查，不是拍脑袋 |
 | 分镜图提示词 + 镜头正文 | 分镜图提示词（`frame`，中文，直呼角色名）给图像模型配合设定图出图；镜头正文（`shot`，中文，通用身份）写这几秒发生什么。景别是枚举，中文景别词必须写进分镜图提示词 |
@@ -79,7 +79,7 @@ metadata:
 node {baseDir}/scripts/novel-storyboard.mjs seed <script.json> --eps 1-3 --aspect 16:9 > <workdir>/storyboard.json
 ```
 
-确定性展开：每场的节拍清单（编号、动作/台词、每拍秒数、说话人）进 `seedScenes`，这就是切镜时的工作底稿；同时把 `--aspect` 写进顶层 `aspectRatio`，省略时默认 `16:9`。**每拍几秒是算出来的，不要让模型重新估。** shots 留空，切镜才是模型的活。
+确定性展开：每场的场次 id（`sceneRef`）与节拍清单（节拍 id、编号、动作/台词、每拍秒数、说话人）进 `seedScenes`，集 id 照抄剧本，这就是切镜时的工作底稿；同时把 `--aspect` 写进顶层 `aspectRatio`，省略时默认 `16:9`。**每拍几秒是算出来的，不要让模型重新估。** shots 留空，切镜才是模型的活。剧本必须已经补过场次和节拍 id（novel-script 的 `ids --write`），没补过 seed 会直接报错。
 
 ### Step 2 — 逐集分段切镜
 
@@ -96,7 +96,13 @@ node {baseDir}/scripts/novel-storyboard.mjs seed <script.json> --eps 1-3 --aspec
 
 **Seedance 提示词不用写**：`render` 报告的提示词面板和 `export --protocol seedance` 都会从上面这些字段现拼。视觉风格由调用方提交时附加，全局约束用 `--constraints <文件>` 给。
 
-切完把 `seedScenes` 删掉。
+切完把 `seedScenes` 删掉，然后补 id：
+
+```bash
+node {baseDir}/scripts/novel-storyboard.mjs ids <storyboard.json> --script <script.json> --write
+```
+
+每段补上段 id（`sg_`），每切补上切 id（`ct_`）。**id 由程序分配，切镜时不要写段 id 和切 id**；`sceneRef` 和 `beatIds` 要写，从 `seedScenes` 照抄。已有的 id 永远不改，插段、插切之后再运行一次只会补新的。2.x 的分镜（`sceneIndex` + `beats` 区间）用 `migrate <old.json> --script <script.json> --write` 一次性转过来。
 
 ### Step 3 — 校验 ⛔ 不能跳
 
@@ -106,7 +112,7 @@ node {baseDir}/scripts/novel-storyboard.mjs validate <storyboard.json> \
   [--shots </path/to/cards>]
 ```
 
-18 道质量门全是代码：节拍全覆盖（分镜级，恰好一次、按顺序、连续）、段 0 < 总秒 ≤ 15、**每切 2–5 秒**、台词装得进分镜、每集总时长在剧本目标 ±15% 内、同框 ≤ 3 人（超了必须带拆解说明）、段号 E01-01 格式连号、中文景别词在分镜图提示词里、运镜用 H3 词表且在自己的 [Shot k] 段落里、**H3 对齐指令由分镜结构推导逐字对账 + 切点时刻逐个对**、**认领台词逐字进 `<d>` 块**、**提示词语言与 promptLang 一致**（双向查：中文写成英文、英文混进中文都拦）、分镜图提示词中文非空、**视频提示词不含角色名**（H3 正文不分语言、Seedance 镜头正文都查；分镜图提示词直呼其名放行）、**构图量化字段齐全**、**Seedance 镜头正文合规**（中文非空，不写时间、镜头编号、图片引用和协议符号）、场次/人物/道具对账剧本、**镜头配方对账**（可选门，见下）。
+18 道质量门全是代码：id 齐全且一致（集 id 照抄剧本、段与切 id 由程序分配、`sceneRef` 与 `beatIds` 指向剧本里真实的场次和节拍）、节拍全覆盖（分镜级，节拍 id 恰好一次、按顺序）、段 0 < 总秒 ≤ 15、**每切 2–5 秒**、台词装得进分镜、每集总时长在剧本目标 ±15% 内、同框 ≤ 3 人（超了必须带拆解说明）、中文景别词在分镜图提示词里、运镜用 H3 词表且在自己的 [Shot k] 段落里、**H3 对齐指令由分镜结构推导逐字对账 + 切点时刻逐个对**、**认领台词逐字进 `<d>` 块**、**提示词语言与 promptLang 一致**（双向查：中文写成英文、英文混进中文都拦）、分镜图提示词中文非空、**视频提示词不含角色名**（H3 正文不分语言、Seedance 镜头正文都查；分镜图提示词直呼其名放行）、**构图量化字段齐全**、**Seedance 镜头正文合规**（中文非空，不写时间、镜头编号、图片引用和协议符号）、场次/人物/道具对账剧本、**镜头配方对账**（可选门，见下）。
 
 结构检查还会校验可选的 `aspectRatio`：只接受 `16:9` 或 `9:16`。它属于 storyboard.json 合同检查，不另算质量门。
 
@@ -124,7 +130,7 @@ node {baseDir}/scripts/novel-storyboard.mjs render <剧名>-storyboard.json --ht
   --script <script.json> --outline <outline.json> --art <art.json> > storyboard-report.html
 ```
 
-报告界面语言用 `--lang zh|en` 指定（优先级 `--lang` > JSON 顶层 `lang` 字段 > 默认中文）——只切界面标签，与 `promptLang`（H3 提示词语言）互相独立。主分镜图与子分镜条按顶层 `aspectRatio` 排版；旧数据的 `_meta.orientation` 与 frame 末尾画幅标签只作兼容。`render` 用 `--frames <目录>` 找分镜图（`<目录>/<段号>/f<切序>.png`，默认当前目录）、用 `--images <目录>` 找批次单的场景设定图（`<目录>/<场景 slug>-sheet.png`，默认 `./images`），两个都可以指到任意路径——**本 skill 不产生这些文件**，下游出完图重跑一次 render 就能嵌进报告。`export --frames <目录>` 会把找得到的分镜图拷进投产包，不用手动往包里放。报告含：KPI 带、分镜节奏带（粗分隔 = 段边界、片宽 = 分镜时长占比、颜色深浅 = 景别远近、点击跳段卡）、分集分镜表（主分镜图 + 子分镜条 + 逐切分镜行 + 分镜图/H3 提示词复制按钮）、生成批次单、配音对齐单、质量门、导出 JSON。Markdown 版每段附完整 H3 提示词，直接复制可用。
+报告界面语言用 `--lang zh|en` 指定（优先级 `--lang` > JSON 顶层 `lang` 字段 > 默认中文）——只切界面标签，与 `promptLang`（H3 提示词语言）互相独立。主分镜图与子分镜条按顶层 `aspectRatio` 排版；旧数据的 `_meta.orientation` 与 frame 末尾画幅标签只作兼容。`render` 用 `--frames <目录>` 找分镜图（`<目录>/<段 id>/<切 id>.png`，默认当前目录）、用 `--images <目录>` 找批次单的场景设定图（`<目录>/<场景 slug>-sheet.png`，默认 `./images`），两个都可以指到任意路径——**本 skill 不产生这些文件**，下游出完图重跑一次 render 就能嵌进报告。`export --frames <目录>` 会把找得到的分镜图拷进投产包，不用手动往包里放。报告含：KPI 带、分镜节奏带（粗分隔 = 段边界、片宽 = 分镜时长占比、颜色深浅 = 景别远近、点击跳段卡）、分集分镜表（主分镜图 + 子分镜条 + 逐切分镜行 + 分镜图/H3 提示词复制按钮）、生成批次单、配音对齐单、质量门、导出 JSON。Markdown 版每段附完整 H3 提示词，直接复制可用。
 
 汇报一句话说清：几集几镜、总时长 vs 目标、几个生成批次、报告路径；没过的门明说。
 
@@ -138,10 +144,10 @@ node {baseDir}/scripts/novel-storyboard.mjs render <剧名>-storyboard.json --ht
 ├── <剧名>-storyboard.md
 ├── storyboard-report.html         ← 双击就能开
 ├── manifest.json                  ← export 生成
-└── E01-01/                        ← 一段一个文件夹 = 一次 H3 生成的全部材料
-    ├── f1.png                     ← 主分镜图（下游出完放这儿）
-    ├── f2.png …                   ← 子分镜图
-    └── prompt.md                  ← H3 提示词（export 生成）
+└── sg_x96b305w/                   ← 一段一个文件夹 = 一次 H3 生成的全部材料，按段 id 命名
+    ├── ct_dfg1t316.png            ← 主分镜图（第 1 切，按切 id 命名；下游出完放这儿）
+    ├── ct_3f06h4n5.png …          ← 子分镜图
+    └── prompt.md                  ← H3 提示词（export 生成，头部写明段标签 E01-01 和 Picture ↔ 文件对照）
 ```
 
 ---
@@ -183,7 +189,7 @@ node {baseDir}/scripts/novel-storyboard.mjs stats
 node {baseDir}/scripts/selftest.mjs
 ```
 
-336 项断言，不调模型、不花额度。18 道质量门每一道都有击穿用例。改完脚本先跑这个。
+406 项断言，不调模型、不花额度。18 道质量门每一道都有击穿用例。改完脚本先跑这个。
 
 ## 自带样例
 

@@ -29,13 +29,13 @@ Same stance as the other four skills in this repo: **a checklist the model grade
 
 | Gate | Rule |
 | --- | --- |
-| **Full beat coverage** | every script beat claimed exactly once, in order, contiguous, cut-level |
+| **IDs complete and consistent** | the episode ID is copied from the script; segment (`sg_`) and cut (`ct_`) IDs are program-assigned; `sceneRef` points at a script scene ID and `beatIds` lists every claimed beat ID, checked against the script when given |
+| **Full beat coverage** | every script beat ID claimed exactly once, in order, never across scenes — missing, duplicated, out-of-order and foreign beats are reported separately |
 | Segment duration | 0 < Σcuts ≤ 15s (the single-generation cap; tune `params.maxSegmentSeconds`) |
 | **Cut duration** | every cut 2–5s — the ~3s rhythm is a **hard gate**, not advice |
 | Dialogue fits | dialogue seconds of claimed beats ≤ cut seconds, per cut |
 | Episode total | Σ segments within ±15% of the script's `targetSeconds` |
 | On-screen cap | ≤ 3 characters per cut, more requires a breakdown note |
-| Segment ID discipline | `E01-01` format, sequential — the segment ID is the asset filename |
 | Size word | the Chinese shot-size word (e.g. 特写) must appear in the cut's frame prompt |
 | Camera vocabulary | camera moves use H3's official terms (`Push In` / `Pan Left` / `Tracking Shot`…) and must appear inside **that cut's own [Shot k] passage** |
 | **H3 structure** | the alignment line is **derived from the cut structure and audited verbatim**; three fields in order; every `[Shot k]` cut time equals the running sum of prior cut durations |
@@ -80,7 +80,7 @@ A single-page, 1600px-wide review document. Reports render with a Chinese UI by 
 - **Cut rhythm strip** (the signature chart): one band per episode, **thick separators = segment boundaries (one generation each)**, slice width = cut duration share, color depth = shot size; click a slice to jump to its segment card
 - **Segment cards**: the master frame follows the top-level `aspectRatio` contract (`16:9` by default, `9:16` for a vertical board; legacy `_meta.orientation` and frame-tail tags remain compatibility fallbacks) (an honest prompt placeholder when not generated), a sub-frame strip, then a **50/50 split**: cut rows on the left (start mark · seconds · size · camera · recipe · picture summary **auto-derived from the claimed script beats**), and an H3 prompt panel on the right — one shot per line, with one-click copy
 - **Generation batch list**: segments sharing a scene + lighting state form one batch around one environment reference image
-- **Audio alignment list**: every dialogue line mapped to **segment#cut** — the worklist for placing TTS audio, fully computed
+- **Audio alignment list**: every dialogue line mapped to **segment label#cut** (links jump by segment ID) — the worklist for placing TTS audio, fully computed
 - **Quality gates** panel + header badge + **Export JSON** (downloads `storyboard.json` verbatim)
 - All graphics inline CSS/SVG, zero external resources, opens offline
 
@@ -105,7 +105,9 @@ node scripts/novel-storyboard.mjs checkup sb.json --script script.json
 node scripts/novel-storyboard.mjs validate sb.json --script script.json --shots /path/to/cards   # optional: the 18th gate
 node scripts/novel-storyboard.mjs render sb.json --html --script script.json --outline outline.json --art art.json > storyboard-report.html
 node scripts/novel-storyboard.mjs render sb.json --html --lang en --script script.json --outline outline.json --art art.json > storyboard-report.html   # English report UI
-node scripts/novel-storyboard.mjs export sb.json --script script.json   # per-segment folders: f1..fN.png + prompt.md
+node scripts/novel-storyboard.mjs export sb.json --script script.json   # per-segment folders named by segment ID: <cut ID>.png + prompt.md
+node scripts/novel-storyboard.mjs ids sb.json --script script.json --write       # assign segment / cut IDs (episode IDs copied from the script)
+node scripts/novel-storyboard.mjs migrate old.json --script script.json --write   # migrate a 2.x storyboard
 ```
 
 ## Limits
@@ -122,7 +124,7 @@ node scripts/novel-storyboard.mjs export sb.json --script script.json   # per-se
 node scripts/selftest.mjs
 ```
 
-336 assertions — beat expansion, H3 skeleton derivation, Seedance assembly, stats and batching, gate-defeating cases, recipe-card parsing and mounting, seed, rendering (both report UI languages, frame-slot aspect), H3 and Seedance export. No model calls, runs in about a second.
+406 assertions — beat expansion, stable IDs and 2.x migration, H3 skeleton derivation, Seedance assembly, stats and batching, gate-defeating cases, recipe-card parsing and mounting, seed, rendering (both report UI languages, frame-slot aspect), H3 and Seedance export. No model calls, runs in about a second.
 
 The bundled example (`examples/渡口-storyboard.json`) is a complete episode-1 storyboard — 10 segments, 34 cuts claiming all 35 script beats at ~3.5s per cut, 119s against a 120s target, 2 generation batches, every segment carrying a fully audited H3 prompt.
 

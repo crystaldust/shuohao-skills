@@ -6,6 +6,7 @@
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assignIds, collectIds, cryptoRng, duplicateIds, isId, seededRng } from './ids.mjs';
 
 /* ------------------------------------------------------------------ */
 /* 常量                                                                */
@@ -216,7 +217,8 @@ export function seedancePrompt(seg, { scene = null, names = {}, image = null, co
     prop: names.prop ?? ((id) => id),
   };
   const cuts = seg?.cuts ?? [];
-  const frames = cuts.map((_, ci) => (image ? image('frame', `${seg.id}/f${ci + 1}.png`) : null));
+  const frameFile = (cut) => `${seg.id}/${cut?.id}.png`;
+  const frames = cuts.map((cut) => (image ? image('frame', frameFile(cut)) : null));
   const refs = [];
   if (!cuts.length || !frames.every(Boolean)) {
     const sheet = (label) => ({ kind: 'sheet', label, file: `${slug(label)}-sheet.png` });
@@ -227,7 +229,7 @@ export function seedancePrompt(seg, { scene = null, names = {}, image = null, co
   const frameRef = new Map();
   frames.forEach((src, ci) => {
     if (!src) return;
-    refs.push({ kind: 'frame', label: `分镜图 #${ci + 1}`, file: `${seg.id}/f${ci + 1}.png` });
+    refs.push({ kind: 'frame', label: `分镜图 #${ci + 1}`, file: frameFile(cuts[ci]) });
     frameRef.set(ci, refs.length);
   });
 
@@ -252,10 +254,7 @@ export function seedancePrompt(seg, { scene = null, names = {}, image = null, co
     const shot = String(cut?.shot ?? '').trim();
     if (shot) out.push(`画面：${shot}${ref ? `（构图参考 @图片${ref}）` : ''}`);
     line('光影', cut?.lighting);
-    const [from, to] = cut?.beats ?? [];
-    const spoken = scene && Number.isInteger(from) && Number.isInteger(to)
-      ? scene.beats.slice(from - 1, to).filter((b) => b.kind === 'line')
-      : [];
+    const spoken = cutBeats(cut, scene).filter((b) => b.kind === 'line');
     // 台词逐字进 {}；身份与语气由镜头正文交代，画外音按官方写法标在 {} 外面
     out.push(`台词：${spoken.length ? spoken.map((b) => `${b.speaker === 'VO' ? '以画外音说' : ''}{${b.text}}`).join(' ') : '{}'}`);
     line('视线落点', cut?.eyeline);
@@ -292,20 +291,21 @@ export function seedancePrompt(seg, { scene = null, names = {}, image = null, co
 const SCRIPT_DEFAULTS = { charsPerSecond: 4.5, actionSeconds: 2.5 };
 const lineChars = (line) => String(line ?? '').replace(/\s+/g, '').length;
 
-/** 把 script.json 展开成分镜要认领的节拍清单：ep → scenes → beats。 */
+/**
+ * 把 script.json 展开成分镜要认领的节拍清单：集 id → scenes → beats。
+ * 键是集 id，ep 只是显示用的集号；场和拍的 n 是位置，现算，只用于显示。
+ * 分镜按场次 id（sceneRef）找场、按节拍 id（beatIds）认领拍——剧本里插一拍，
+ * 只有新的那一拍没人认领，其余认领原样有效。
+ */
 export function expandScript(script) {
   const p = { ...SCRIPT_DEFAULTS, ...(script?.params ?? {}) };
   const eps = new Map();
   for (const ep of script?.episodes ?? []) {
-    const scenes = (ep?.scenes ?? []).map((sc, i) => ({
-      sceneIndex: i + 1,
-      sceneId: sc.sceneId,
-      lighting: sc.lighting ?? '',
-      characters: sc.characters ?? [],
-      props: sc.props ?? [],
-      beats: (sc.flow ?? []).map((b, j) => {
+    const scenes = (ep?.scenes ?? []).map((sc, i) => {
+      const beats = (sc.flow ?? []).map((b, j) => {
         const isLine = typeof b?.line === 'string';
         return {
+          id: b?.id,
           n: j + 1,
           kind: isLine ? 'line' : 'action',
           seconds: r1(isLine ? lineChars(b.line) / p.charsPerSecond : p.actionSeconds),
@@ -313,11 +313,137 @@ export function expandScript(script) {
           delivery: isLine ? (b.delivery ?? '') : undefined,
           text: isLine ? b.line : b.action,
         };
-      }),
-    }));
-    eps.set(ep.ep, { ep: ep.ep, targetSeconds: ep.targetSeconds, scenes });
+      });
+      return {
+        id: sc.id,
+        n: i + 1,
+        sceneId: sc.sceneId,
+        lighting: sc.lighting ?? '',
+        characters: sc.characters ?? [],
+        props: sc.props ?? [],
+        beats,
+        byId: new Map(beats.map((b) => [b.id, b])),
+      };
+    });
+    eps.set(ep.id, { id: ep.id, ep: ep.ep, targetSeconds: ep.targetSeconds, scenes });
   }
   return eps;
+}
+
+/** 显示标签：E01-02 = 集号 + 段在这一集里的位置（从 0 起的下标）。只用于报告、导出标题和报错。 */
+export const segLabel = (ep, i) => `E${String(ep).padStart(2, '0')}-${String(i + 1).padStart(2, '0')}`;
+
+/** 按场次 id 找剧本这一集里的那一场。 */
+const sceneOf = (sEp, ref) => sEp?.scenes?.find((s) => s.id === ref) ?? null;
+
+/** 分镜认领的节拍：按 beatIds 逐个查，不认识的 id 跳过（由 ids / coverage 门报）。 */
+function cutBeats(cut, scene) {
+  if (!scene || !Array.isArray(cut?.beatIds)) return [];
+  return cut.beatIds.map((id) => scene.byId.get(id)).filter(Boolean);
+}
+
+const NO_SCRIPT_IDS = '剧本还没有场次 / 节拍 id：先运行 novel-script 的 ids --write';
+const scriptHasIds = (script) =>
+  (script?.episodes ?? []).every((ep) =>
+    isId(ep?.id, 'ep') && (ep.scenes ?? []).every((sc) => isId(sc?.id, 'sc') && (sc.flow ?? []).every((b) => isId(b?.id, 'bt'))));
+
+/* ------------------------------------------------------------------ */
+/* 稳定 id                                                              */
+/* ------------------------------------------------------------------ */
+/*
+ * 集 id 照抄剧本（ep 只是显示用的集号，给了剧本就对照）；段 sg_、切 ct_ 由 ids 分配。
+ * 段的 sceneRef 指向剧本场次 id，切的 beatIds 逐拍列出认领的节拍 id——不用区间，
+ * 剧本里插一拍时新的那一拍会被覆盖门点名，不会悄悄并进相邻的切。
+ */
+
+function storyboardIdProblems(eps, expanded) {
+  const bad = [];
+  const segIds = [];
+  const cutIds = [];
+  for (const ep of eps) {
+    const label = `E${String(ep?.ep).padStart(2, '0')}`;
+    const sEp = expanded && isId(ep?.id, 'ep') ? expanded.get(ep.id) : null;
+    if (ep?.id === undefined) bad.push(`${label} 缺集 id（seed 时从剧本照抄；或 ids --script 补上）`);
+    else if (!isId(ep.id, 'ep')) bad.push(`${label} 的集 id「${ep.id}」格式不对`);
+    else if (expanded && !sEp) bad.push(`${label} 的集 id 不在剧本里`);
+    else if (sEp && sEp.ep !== ep.ep) bad.push(`${label} 的集 id 在剧本里是第 ${sEp.ep} 集`);
+    (ep?.segments ?? []).forEach((seg, i) => {
+      const sid = segLabel(ep?.ep, i);
+      if (seg?.id === undefined) bad.push(`${sid} 缺段 id（运行 ids --write）`);
+      else if (!isId(seg.id, 'sg')) bad.push(`${sid} 的段 id「${seg.id}」格式不对`);
+      else segIds.push(seg.id);
+      if (seg?.sceneIndex !== undefined) bad.push(`${sid} 还是 2.x 写法（sceneIndex）：运行 migrate --script`);
+      else if (seg?.sceneRef === undefined) bad.push(`${sid} 缺 sceneRef（剧本场次 id，seed 的 seedScenes 里照抄）`);
+      else if (!isId(seg.sceneRef, 'sc')) bad.push(`${sid} 的 sceneRef「${seg.sceneRef}」格式不对`);
+      else if (sEp && !sceneOf(sEp, seg.sceneRef)) bad.push(`${sid} 的 sceneRef 不在剧本第 ${sEp.ep} 集里`);
+      (seg?.cuts ?? []).forEach((cut, ci) => {
+        const cid = `${sid}#${ci + 1}`;
+        if (cut?.id === undefined) bad.push(`${cid} 缺切 id（运行 ids --write）`);
+        else if (!isId(cut.id, 'ct')) bad.push(`${cid} 的切 id「${cut.id}」格式不对`);
+        else cutIds.push(cut.id);
+        if (cut?.beats !== undefined) bad.push(`${cid} 还是 2.x 写法（beats）：运行 migrate --script`);
+        else if (!Array.isArray(cut?.beatIds) || cut.beatIds.length === 0) bad.push(`${cid} 缺 beatIds（逐拍列出认领的节拍 id）`);
+        else for (const b of cut.beatIds.filter((x) => !isId(x, 'bt'))) bad.push(`${cid} 的 beatIds 里「${b}」格式不对`);
+      });
+    });
+  }
+  for (const id of duplicateIds(segIds)) bad.push(`段 id ${id} 重复`);
+  for (const id of duplicateIds(cutIds)) bad.push(`切 id ${id} 重复`);
+  return bad;
+}
+
+/** 补 id：集 id 按集号从剧本照抄（不给剧本不补），段、切只补缺的。已有的都不动，不改入参。 */
+export function assignStoryboardIds(doc, { script = null, rng = cryptoRng } = {}) {
+  const idOf = new Map((script?.episodes ?? []).filter((e) => isId(e?.id, 'ep')).map((e) => [e.ep, e.id]));
+  let taken = collectIds(doc);
+  const episodes = (doc?.episodes ?? []).map((ep) => {
+    const withId = ep?.id === undefined && idOf.has(ep?.ep) ? { id: idOf.get(ep.ep), ...ep } : ep;
+    const sg = assignIds(withId?.segments ?? [], 'sg', taken, rng);
+    taken = sg.taken;
+    const segments = sg.items.map((seg) => {
+      const ct = assignIds(seg?.cuts ?? [], 'ct', taken, rng);
+      taken = ct.taken;
+      return Array.isArray(seg?.cuts) ? { ...seg, cuts: ct.items } : seg;
+    });
+    return Array.isArray(withId?.segments) ? { ...withId, segments } : withId;
+  });
+  return { ...doc, episodes };
+}
+
+/** 一段 2.x 的段：按位置在剧本这一集里找场、按区间展开节拍。2.x 的段号按位置编，不是 id，丢掉。 */
+function migrateSegment(seg, sEp, sid) {
+  const { id: _positional, sceneIndex, ...rest } = seg;
+  const scene = sEp.scenes?.[sceneIndex - 1];
+  if (!scene) throw new Error(`${sid} 的 sceneIndex ${sceneIndex} 在剧本第 ${sEp.ep} 集里找不到`);
+  const flow = scene.flow ?? [];
+  const cuts = (rest.cuts ?? []).map((cut, ci) => {
+    if (cut?.beats === undefined) return cut;
+    const { beats, ...other } = cut;
+    const [from, to] = beats;
+    if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to > flow.length || from > to) {
+      throw new Error(`${sid}#${ci + 1} 的 beats [${from}, ${to}] 超出该场 ${flow.length} 拍`);
+    }
+    return { beatIds: flow.slice(from - 1, to).map((b) => b.id), ...other };
+  });
+  return { sceneRef: scene.id, ...rest, cuts };
+}
+
+/**
+ * 2.x → 3.0：sceneIndex → sceneRef，beats [起, 止] → 逐拍的 beatIds，再补集、段、切 id。
+ * 已经是 3.0 写法的段原样保留，重复运行不会出错。3.0 里只有迁移允许按位置查找；
+ * 场次与节拍 id 只能来自剧本，所以必须给剧本。
+ */
+export function migrateStoryboard(doc, script, rng = cryptoRng) {
+  if (!script) throw new Error('迁移分镜必须给 3.0 的剧本（--script）：场次与节拍 id 只能从剧本照抄');
+  if (!scriptHasIds(script)) throw new Error(NO_SCRIPT_IDS);
+  const episodes = (doc?.episodes ?? []).map((ep) => {
+    const sEp = (script.episodes ?? []).find((e) => e.ep === ep?.ep);
+    if (!sEp) throw new Error(`第 ${ep?.ep} 集在剧本里找不到`);
+    const segments = (ep.segments ?? []).map((seg, i) =>
+      seg?.sceneIndex === undefined ? seg : migrateSegment(seg, sEp, segLabel(ep.ep, i)));
+    return { ...ep, segments };
+  });
+  return assignStoryboardIds({ ...doc, episodes }, { script, rng });
 }
 
 export const segSeconds = (segment) => r1((segment?.cuts ?? []).reduce((n, c) => n + (c?.seconds ?? 0), 0));
@@ -454,39 +580,39 @@ export function computeStats(board, script) {
   const dialogue = [];       // 配音对齐单：段 × 分镜 × 说话人 × 台词
 
   for (const ep of board?.episodes ?? []) {
-    const sEp = expanded.get(ep.ep);
+    const sEp = expanded.get(ep.id);
     let total = 0;
     let cutCount = 0;
     let withLines = 0;
-    for (const seg of ep?.segments ?? []) {
-      const scene = sEp?.scenes?.[seg.sceneIndex - 1];
+    (ep?.segments ?? []).forEach((seg, i) => {
+      const label = segLabel(ep.ep, i);
+      const scene = sceneOf(sEp, seg?.sceneRef);
       const secs = segSeconds(seg);
       total += secs;
       let segHasLine = false;
       (seg?.cuts ?? []).forEach((cut, ci) => {
         cutCount++;
-        if (!scene) return;
-        const [from, to] = cut.beats ?? [];
-        for (const b of scene.beats.slice((from ?? 1) - 1, to ?? 0)) {
+        for (const b of cutBeats(cut, scene)) {
           if (b.kind !== 'line') continue;
           segHasLine = true;
-          dialogue.push({ segment: seg.id, cut: ci + 1, ep: ep.ep, speaker: b.speaker, line: b.text, seconds: b.seconds });
+          dialogue.push({ segment: seg.id, label, cut: ci + 1, cutId: cut.id, ep: ep.ep, speaker: b.speaker, line: b.text, seconds: b.seconds });
         }
       });
       if (segHasLine) withLines++;
       if (scene) {
         const key = `${scene.sceneId}|${scene.lighting}`;
         if (!batches.has(key)) {
-          batches.set(key, { sceneId: scene.sceneId, lighting: scene.lighting, segments: [], characters: new Set(), props: new Set() });
+          batches.set(key, { sceneId: scene.sceneId, lighting: scene.lighting, segments: [], labels: [], characters: new Set(), props: new Set() });
         }
         const batch = batches.get(key);
         batch.segments.push(seg.id);
+        batch.labels.push(label);
         for (const cut of seg?.cuts ?? []) {
           for (const c of cut.characters ?? []) batch.characters.add(c);
           for (const pr of cut.props ?? []) batch.props.add(pr);
         }
       }
-    }
+    });
     episodes.push({
       ep: ep.ep,
       target: sEp?.targetSeconds ?? 0,
@@ -514,7 +640,7 @@ export function computeStats(board, script) {
     totals,
     dialogue,
     batches: [...batches.values()].map((b) => ({
-      sceneId: b.sceneId, lighting: b.lighting, segments: b.segments,
+      sceneId: b.sceneId, lighting: b.lighting, segments: b.segments, labels: b.labels,
       characters: [...b.characters], props: [...b.props],
     })),
   };
@@ -523,6 +649,45 @@ export function computeStats(board, script) {
 /* ------------------------------------------------------------------ */
 /* 质量门                                                               */
 /* ------------------------------------------------------------------ */
+
+/**
+ * 一场的覆盖检查：把认领这一场的各切 beatIds 按段、切顺序连起来，必须恰好等于剧本这一场的
+ * 节拍 id 序列。不认识的 id、重拍、漏拍各报各的；都没有时再查顺序。空的 beatIds 由 ids 门报。
+ */
+function coverageProblems(ep, scene) {
+  const where = `E${String(ep?.ep).padStart(2, '0')} 第 ${scene.n} 场`;
+  const claims = [];
+  let hasSegment = false;
+  (ep?.segments ?? []).forEach((seg, i) => {
+    if (seg?.sceneRef !== scene.id) return;
+    hasSegment = true;
+    (seg?.cuts ?? []).forEach((cut, ci) => {
+      for (const id of Array.isArray(cut?.beatIds) ? cut.beatIds : []) claims.push({ id, who: `${segLabel(ep.ep, i)}#${ci + 1}` });
+    });
+  });
+  if (!hasSegment) return scene.beats.length ? [`${where}整场没有分镜`] : [];
+
+  const out = [];
+  const firstWho = new Map();
+  for (const c of claims) {
+    const beat = scene.byId.get(c.id);
+    if (!beat) out.push(`${c.who} 认领的 ${c.id} 不在 ${where}`);
+    else if (firstWho.has(c.id)) out.push(`${where}第 ${beat.n} 拍被 ${firstWho.get(c.id)} 和 ${c.who} 重复认领`);
+    else firstWho.set(c.id, c.who);
+  }
+  // 漏拍：连续的合并成一段；单拍带上节拍 id，方便对回剧本
+  const missing = scene.beats.filter((b) => !firstWho.has(b.id));
+  for (let k = 0; k < missing.length; ) {
+    let j = k;
+    while (j + 1 < missing.length && missing[j + 1].n === missing[j].n + 1) j += 1;
+    out.push(j === k ? `${where}第 ${missing[k].n} 拍（${missing[k].id}）没人认领` : `${where}第 ${missing[k].n}–${missing[j].n} 拍没人认领`);
+    k = j + 1;
+  }
+  if (out.length) return out;
+  const order = [...firstWho.keys()];
+  const at = scene.beats.findIndex((b, k) => b.id !== order[k]);
+  return at < 0 ? [] : [`${where}从第 ${scene.beats[at].n} 拍起认领乱序`];
+}
 
 export function gateReport(board, ctx = {}) {
   const gates = [];
@@ -533,7 +698,7 @@ export function gateReport(board, ctx = {}) {
   const eps = Array.isArray(board?.episodes) ? board.episodes : [];
   const bad = {
     coverage: [], segCap: [], cutLen: [], fit: [], duration: [], crowd: [],
-    id: [], size: [], camera: [], frame: [], names: [], refs: [],
+    size: [], camera: [], frame: [], names: [], refs: [],
     h3s: [], h3d: [], h3e: [], recipe: [], comp: [], sd: [],
   };
   // 配方卡库是可选挂载：ctx.recipes 为空就整门跳过（不是「没有 cut 带 recipe」就跳过）
@@ -551,20 +716,16 @@ export function gateReport(board, ctx = {}) {
     for (const a of c?.aliases ?? []) banned.push(a);
   }
 
+  const idBad = storyboardIdProblems(eps, expanded);
+
   for (const ep of eps) {
     const label = `E${String(ep?.ep).padStart(2, '0')}`;
-    const sEp = expanded?.get(ep?.ep);
-    if (expanded && !sEp) bad.refs.push(`${label} 在剧本里不存在`);
+    // 集、场次按 id 找；找不到由 ids 门报，这里只是没有可对账的剧本
+    const sEp = expanded && isId(ep?.id, 'ep') ? expanded.get(ep.id) ?? null : null;
 
-    // 段号纪律：格式、集号一致、连号
-    (ep?.segments ?? []).forEach((seg, i) => {
-      const want = `${label}-${String(i + 1).padStart(2, '0')}`;
-      if (seg?.id !== want) bad.id.push(`第 ${i + 1} 段应为 ${want}，实际「${seg?.id}」`);
-    });
-
-    let prevSceneIndex = 0;
-    for (const seg of ep?.segments ?? []) {
-      const sid = seg?.id ?? '?';
+    let prevSceneN = 0;
+    for (const [i, seg] of (ep?.segments ?? []).entries()) {
+      const sid = segLabel(ep?.ep, i);
       const cuts = seg?.cuts ?? [];
       const total = segSeconds(seg);
 
@@ -607,11 +768,10 @@ export function gateReport(board, ctx = {}) {
       if (/[（）()]/.test(String(seg?.music ?? ''))) bad.sd.push(`${sid} 的 music 自带了括号——程序会套（）`);
 
       const slices = h3CutSlices(h3, cuts.length, promptLang);
-      const scene = sEp ? sEp.scenes[seg?.sceneIndex - 1] : null;
-      if (sEp && !scene) bad.refs.push(`${sid} 的 sceneIndex ${seg?.sceneIndex} 在剧本第 ${ep.ep} 集里不存在`);
+      const scene = sceneOf(sEp, seg?.sceneRef);
       if (scene) {
-        if (seg.sceneIndex < prevSceneIndex) bad.coverage.push(`${sid} 场次顺序倒退`);
-        prevSceneIndex = Math.max(prevSceneIndex, seg.sceneIndex);
+        if (scene.n < prevSceneN) bad.coverage.push(`${sid} 场次顺序倒退`);
+        prevSceneN = Math.max(prevSceneN, scene.n);
       }
 
       cuts.forEach((cut, ci) => {
@@ -688,17 +848,14 @@ export function gateReport(board, ctx = {}) {
           for (const pr of cut?.props ?? []) {
             if (!propSet.has(pr)) bad.refs.push(`${cid} 的 ${pr} 不在剧本该场道具里`);
           }
-          const [from, to] = cut?.beats ?? [];
-          if (Number.isInteger(from) && Number.isInteger(to) && from >= 1 && to <= scene.beats.length && from <= to) {
-            let dlg = 0;
-            for (const b of scene.beats.slice(from - 1, to)) {
-              if (b.kind !== 'line') continue;
-              dlg += b.seconds;
-              const re = new RegExp(`<d>\\[[^\\]]+\\]\\s*${b.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*</d>`);
-              if (!re.test(h3)) bad.h3d.push(`${sid} 的 h3Prompt 缺台词「${b.text.slice(0, 12)}…」的 <d> 块`);
-            }
-            if (dlg > cut.seconds) bad.fit.push(`${cid} 台词 ${r1(dlg)} 秒装不进 ${cut.seconds} 秒`);
+          let dlg = 0;
+          for (const b of cutBeats(cut, scene)) {
+            if (b.kind !== 'line') continue;
+            dlg += b.seconds;
+            const re = new RegExp(`<d>\\[[^\\]]+\\]\\s*${b.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*</d>`);
+            if (!re.test(h3)) bad.h3d.push(`${sid} 的 h3Prompt 缺台词「${b.text.slice(0, 12)}…」的 <d> 块`);
           }
+          if (dlg > cut.seconds) bad.fit.push(`${cid} 台词 ${r1(dlg)} 秒装不进 ${cut.seconds} 秒`);
         }
       });
 
@@ -724,35 +881,9 @@ export function gateReport(board, ctx = {}) {
       }
     }
 
-    // 节拍全覆盖：每场的节拍被恰好一次、按顺序、连续认领（分镜级）
+    // 节拍全覆盖：每场的节拍 id 被恰好一次、按顺序认领（分镜级）
     if (sEp) {
-      for (const scene of sEp.scenes) {
-        const claims = [];
-        for (const seg of ep?.segments ?? []) {
-          if (seg?.sceneIndex !== scene.sceneIndex) continue;
-          (seg?.cuts ?? []).forEach((cut, ci) => {
-            const [from, to] = cut?.beats ?? [];
-            if (!Number.isInteger(from) || !Number.isInteger(to) || from < 1 || to > scene.beats.length || from > to) {
-              bad.coverage.push(`${seg.id}#${ci + 1} 的节拍区间 [${from}, ${to}] 不合法（该场共 ${scene.beats.length} 拍）`);
-              return;
-            }
-            claims.push([from, to, `${seg.id}#${ci + 1}`]);
-          });
-        }
-        let cursor = 1;
-        for (const [from, to, id] of claims) {
-          if (from !== cursor) {
-            bad.coverage.push(`${label} 第 ${scene.sceneIndex} 场第 ${cursor} 拍${from > cursor ? '没人认领' : `被 ${id} 重复认领`}`);
-          }
-          cursor = Math.max(cursor, to + 1);
-        }
-        if (claims.length && cursor <= scene.beats.length) {
-          bad.coverage.push(`${label} 第 ${scene.sceneIndex} 场第 ${cursor}–${scene.beats.length} 拍没人认领`);
-        }
-        if (!claims.length && scene.beats.length) {
-          bad.coverage.push(`${label} 第 ${scene.sceneIndex} 场整场没有分镜`);
-        }
-      }
+      for (const scene of sEp.scenes) bad.coverage.push(...coverageProblems(ep, scene));
 
       // 每集总时长对齐剧本目标
       if (sEp.targetSeconds > 0) {
@@ -770,13 +901,13 @@ export function gateReport(board, ctx = {}) {
   const SKIP_SHOTS = '未挂载配方卡库（--shots <卡片目录>），本门跳过（视为通过）';
   const NO_RECIPE = '本批分镜没有引用配方';
 
+  add('ids', 'id 齐全且一致（集 id、段 id、切 id、场次与节拍引用）', eps.length > 0 && idBad.length === 0, idBad.join('；'));
   add('coverage', '剧本节拍被恰好一次、按顺序、连续认领（分镜级）', bad.coverage.length === 0, script ? bad.coverage.join('；') : SKIP_SCRIPT);
   add('segment-cap', `每段 0 < 总秒数 ≤ ${params.maxSegmentSeconds}（一次生成的上限）`, eps.length > 0 && bad.segCap.length === 0, bad.segCap.join('；'));
   add('cut-length', `每个分镜 ${params.minCutSeconds}–${params.maxCutSeconds} 秒——短剧的注意力节奏`, eps.length > 0 && bad.cutLen.length === 0, bad.cutLen.join('；'));
   add('dialogue-fit', '认领节拍的台词装得进分镜秒数', bad.fit.length === 0, script ? bad.fit.join('；') : SKIP_SCRIPT);
   add('ep-duration', `每集总时长在剧本目标 ±${Math.round(params.tolerance * 100)}% 内`, bad.duration.length === 0, script ? bad.duration.join('；') : SKIP_SCRIPT);
   add('crowd', `单个分镜同框 ≤ ${params.maxOnScreen} 人，超了必须带拆解说明`, bad.crowd.length === 0, bad.crowd.join('；'));
-  add('segment-id', '段号 E01-01 格式、按顺序连号', bad.id.length === 0, bad.id.join('；'));
   add('size-phrase', '景别中文词写进分镜图提示词', bad.size.length === 0, bad.size.join('；'));
   add('camera-phrase', '运镜用 H3 官方词表，且出现在自己的 [Shot k] 段落里', bad.camera.length === 0, bad.camera.join('；'));
   add('h3-structure', 'H3 首行对齐指令由分镜结构推导逐字对账，切点时刻逐个对', eps.length > 0 && bad.h3s.length === 0, bad.h3s.join('；'));
@@ -826,10 +957,9 @@ export function validateStoryboard(board, ctx = {}) {
       p(`${label}没有段`);
       continue;
     }
-    for (const seg of ep.segments) {
-      const sid = seg?.id ?? '?';
-      if (typeof seg?.id !== 'string') p(`${label}有段缺 id`);
-      if (!Number.isInteger(seg?.sceneIndex) || seg.sceneIndex < 1) p(`${sid} 缺 sceneIndex（剧本里第几场）`);
+    for (const [i, seg] of ep.segments.entries()) {
+      const sid = segLabel(ep?.ep, i);
+      if (typeof seg?.sceneRef !== 'string') p(`${sid} 缺 sceneRef（剧本场次 id，seed 的 seedScenes 里照抄）`);
       if (typeof seg?.h3Prompt !== 'string') p(`${sid} 缺 h3Prompt（H3 视频提示词，写法见 references/h3-prompt.md）`);
       if (!Array.isArray(seg?.cuts) || seg.cuts.length === 0) {
         p(`${sid} 没有分镜`);
@@ -837,7 +967,7 @@ export function validateStoryboard(board, ctx = {}) {
       }
       seg.cuts.forEach((cut, ci) => {
         const cid = `${sid}#${ci + 1}`;
-        if (!Array.isArray(cut?.beats) || cut.beats.length !== 2) p(`${cid} 的 beats 必须是 [起, 止] 两个数`);
+        if (!Array.isArray(cut?.beatIds) || cut.beatIds.length === 0) p(`${cid} 缺 beatIds（逐拍列出认领的节拍 id）`);
         if (typeof cut?.seconds !== 'number') p(`${cid} 缺 seconds`);
         if (!Array.isArray(cut?.characters)) p(`${cid} 缺 characters（空镜给空数组）`);
         if (typeof cut?.frame !== 'string') p(`${cid} 缺 frame（分镜图提示词，中文）`);
@@ -859,21 +989,26 @@ export function seedFromScript(script, epRange = null, aspectRatio = '16:9') {
   if (!ASPECT_RATIOS.has(aspectRatio)) {
     throw new Error(`aspectRatio 只能是 16:9 或 9:16，实际是「${aspectRatio}」`);
   }
+  // 段和切要按 id 认领剧本的场次和节拍：剧本没补 id 就没有可照抄的东西
+  if (!scriptHasIds(script)) throw new Error(NO_SCRIPT_IDS);
   const expanded = expandScript(script);
   const inRange = (n) => !epRange || (n >= epRange[0] && n <= epRange[1]);
   const episodes = [];
-  for (const [epNo, sEp] of expanded) {
-    if (!inRange(epNo)) continue;
+  for (const sEp of expanded.values()) {
+    if (!inRange(sEp.ep)) continue;
     episodes.push({
-      ep: epNo,
+      id: sEp.id,
+      ep: sEp.ep,
       segments: [],
       seedScenes: sEp.scenes.map((sc) => ({
-        sceneIndex: sc.sceneIndex,
+        sceneRef: sc.id,
+        n: sc.n,
         sceneId: sc.sceneId,
         lighting: sc.lighting,
         characters: sc.characters,
         props: sc.props,
         beats: sc.beats.map((b) => ({
+          id: b.id,
           n: b.n,
           kind: b.kind,
           seconds: b.seconds,
@@ -891,11 +1026,13 @@ export function seedFromScript(script, epRange = null, aspectRatio = '16:9') {
 /* ------------------------------------------------------------------ */
 /*
  * 固定投产结构：每段一个文件夹，提示词就躺在图旁边，整个文件夹就是一次生成。
+ * 文件夹按段 id 命名，分镜图按切 id 命名（sg_…/ct_….png）：插段、重排之后，
+ * 已生成的素材仍按 id 对回原来那一段、那一切。E01-02 这类标签和顺序写进 manifest，只用于显示。
  *
- * - H3：E01-01/f1.png … fN.png + prompt.md（h3Prompt 原样），根部 manifest.json
- *   按 Picture 序列出该段要挂的分镜图、秒数、缺图标注
- * - Seedance：E01-01/seedance.md（程序拼的提示词）+ 附件，根部 seedance-manifest.json
- *   按 @图片 编号列出每个附件——分镜图就是包里的 f<k>.png，设定图拷成 ref-<n>.png
+ * - H3：<段 id>/<切 id>.png + prompt.md（头部 Picture ↔ 文件对照表，分隔线以下是 h3Prompt 原样），
+ *   根部 manifest.json 按 Picture 序列出该段要挂的分镜图、秒数、缺图标注
+ * - Seedance：<段 id>/seedance.md（程序拼的提示词）+ 附件，根部 seedance-manifest.json
+ *   按 @图片 编号列出每个附件——分镜图就是包里的 <切 id>.png，设定图拷成 ref-<n>.png
  *
  * 纯函数返回文件清单与要拷的设定图，落盘在 CLI 层——可测性。
  *
@@ -915,10 +1052,14 @@ export function exportPack(
   const manifest = [];
   const copies = [];
   let missingTotal = 0;
+  let order = 0;
   for (const ep of board?.episodes ?? []) {
-    for (const seg of ep?.segments ?? []) {
+    for (const [i, seg] of (ep?.segments ?? []).entries()) {
+      order += 1;
+      const label = segLabel(ep.ep, i);
+      const head = { segment: seg.id, label, order, ep: ep.ep };
       if (protocol === 'seedance') {
-        const scene = expanded.get(ep.ep)?.scenes?.[seg.sceneIndex - 1] ?? null;
+        const scene = sceneOf(expanded.get(ep.id), seg.sceneRef);
         const image = (kind, rel) => (kind === 'frame' && imageExists(`${prefix}${rel}`) ? rel : null);
         const { prompt, refs } = seedancePrompt(seg, { scene, names, image, constraints });
         const attachments = refs.map((r, i) => {
@@ -929,27 +1070,28 @@ export function exportPack(
         });
         const missing = attachments.filter((a) => !a.present).map((a) => a.path);
         missingTotal += missing.length;
-        const head = attachments.length
+        const list = attachments.length
           ? attachments.map((a) => `- ${a.ref} = ${a.label} → ${a.path.slice(prefix.length + seg.id.length + 1)}${a.present ? '' : '（缺）'}`).join('\n')
           : '- （无附件）';
-        const md = `# ${seg.id} · Seedance 提示词\n\n附件按 @图片 编号依次上传：\n\n${head}\n\n视觉风格（画风层）在提交时附加，本文不含。总时长由接口参数控制，正文不写秒数。\n\n---\n\n${prompt}\n`;
+        const md = `# ${label} · Seedance 提示词\n\n段 id：\`${seg.id}\`。附件按 @图片 编号依次上传：\n\n${list}\n\n视觉风格（画风层）在提交时附加，本文不含。总时长由接口参数控制，正文不写秒数。\n\n---\n\n${prompt}\n`;
         files.push({ path: `${prefix}${seg.id}/seedance.md`, content: md });
-        manifest.push({ segment: seg.id, seconds: segSeconds(seg), cuts: (seg.cuts ?? []).length, prompt: `${prefix}${seg.id}/seedance.md`, attachments, missing });
+        manifest.push({ ...head, seconds: segSeconds(seg), cuts: (seg.cuts ?? []).length, prompt: `${prefix}${seg.id}/seedance.md`, attachments, missing });
         continue;
       }
       // prompt.md 头部先说清哪个文件是首帧、每张图钉在第几秒——
       // 分隔线以下是 h3Prompt 原样，整段复制就能用
-      const starts = cutStarts(seg.cuts);
-      const mapping = (seg.cuts ?? [])
-        .map((_, i) => `- Picture ${i + 1} = f${i + 1}.png${i === 0 ? '（**首帧**，钉 0.00 秒）' : `（钉 ${starts[i].toFixed(2)} 秒）`}`)
+      const cuts = seg.cuts ?? [];
+      const starts = cutStarts(cuts);
+      const mapping = cuts
+        .map((c, k) => `- Picture ${k + 1} = ${c.id}.png${k === 0 ? '（**首帧**，钉 0.00 秒）' : `（钉 ${starts[k].toFixed(2)} 秒）`}`)
         .join('\n');
-      const promptMd = `# ${seg.id} · H3 提示词\n\n首帧 = **f1.png**。图片按 Picture 序号挂载：\n\n${mapping}\n\n---\n\n${seg.h3Prompt ?? ''}\n`;
+      const promptMd = `# ${label} · H3 提示词\n\n段 id：\`${seg.id}\`。首帧 = **${cuts[0]?.id}.png**。图片按 Picture 序号挂载：\n\n${mapping}\n\n---\n\n${seg.h3Prompt ?? ''}\n`;
       files.push({ path: `${prefix}${seg.id}/prompt.md`, content: promptMd });
-      const pictures = (seg.cuts ?? []).map((_, i) => `${prefix}${seg.id}/f${i + 1}.png`);
+      const pictures = cuts.map((c) => `${prefix}${seg.id}/${c.id}.png`);
       const missing = pictures.filter((rel) => !imageExists(rel));
       missingTotal += missing.length;
       manifest.push({
-        segment: seg.id,
+        ...head,
         seconds: segSeconds(seg),
         cuts: (seg.cuts ?? []).length,
         cutStarts: cutStarts(seg.cuts),
@@ -990,13 +1132,13 @@ export function slug(name) {
  * 这里做展示层翻译——gateReport 的逻辑与中文诊断文案一行不动（CLI 仍是中文）。
  * 动态阈值由门自己算，映射里只写固定语义；未命中的 id 回落到原标签。 */
 const GATE_LABELS_EN = {
+  'ids': 'IDs complete and consistent (episode, segment and cut IDs; scene and beat references)',
   'coverage': 'Every script beat claimed exactly once, in order, contiguous (cut level)',
   'segment-cap': 'Each segment 0 < total ≤ {1}s (the single-generation cap)',
   'cut-length': 'Every cut {0}–{1}s — the short-drama attention rhythm',
   'dialogue-fit': 'Dialogue of the claimed beats fits within the cut duration',
   'ep-duration': 'Episode total within ±{0}% of the script\'s target',
   'crowd': 'At most {0} characters on screen per cut; more requires a breakdown note',
-  'segment-id': 'Segment IDs in E01-01 format, sequential',
   'size-phrase': 'Chinese shot-size word present in the frame prompt',
   'camera-phrase': 'Camera move from the official H3 vocabulary, inside its own [Shot k] passage',
   'h3-structure': 'H3 alignment line derived from the cut structure, audited verbatim; cut times match',
@@ -1203,13 +1345,6 @@ function cutRecipe(cut, recipes, t) {
   };
 }
 
-/** 分镜认领的节拍 → 画面摘要（动作原文 + 台词行），模型不重写。 */
-function cutBeats(cut, scene) {
-  if (!scene) return [];
-  const [from, to] = cut.beats ?? [];
-  return scene.beats.slice((from ?? 1) - 1, to ?? 0);
-}
-
 /* ------------------------------------------------------------------ */
 /* render — markdown                                                   */
 /* ------------------------------------------------------------------ */
@@ -1227,11 +1362,11 @@ export function renderMarkdown(board, ctx = {}) {
 
   for (const [i, ep] of eps.entries()) {
     const st = stats.episodes[i];
-    const sEp = expanded.get(ep.ep);
+    const sEp = expanded.get(ep.id);
     out.push(`## E${String(ep.ep).padStart(2, '0')}`, '', `> ${t.epHead(st.segments, st.cuts, st.totalSeconds, st.target)}`, '');
-    for (const seg of ep.segments) {
-      const scene = sEp?.scenes?.[seg.sceneIndex - 1];
-      out.push(`### ${seg.id} · ${scene ? t.withLighting(n.scene(scene.sceneId), scene.lighting) : '?'} · ${t.segHead(segSeconds(seg), seg.cuts.length)}`, '');
+    for (const [si, seg] of ep.segments.entries()) {
+      const scene = sceneOf(sEp, seg.sceneRef);
+      out.push(`### ${segLabel(ep.ep, si)} · ${scene ? t.withLighting(n.scene(scene.sceneId), scene.lighting) : '?'} · ${t.segHead(segSeconds(seg), seg.cuts.length)} · \`${seg.id}\``, '');
       if (seg.blocking) out.push(`> ${t.blockingLabel}：${seg.blocking}`, '');
       out.push(mdHead(t.cutCols));
       const starts = cutStarts(seg.cuts);
@@ -1256,10 +1391,10 @@ export function renderMarkdown(board, ctx = {}) {
 
   out.push(`## ${t.secBatches}`, '', mdHead(t.batchCols));
   for (const b of stats.batches) {
-    out.push(mdRow([`${b.sceneId} ${n.scene(b.sceneId)}`, b.lighting, b.segments.join(t.listSep), b.characters.map(n.char).join(t.listSep), b.props.map(n.prop).join(t.listSep)]));
+    out.push(mdRow([`${b.sceneId} ${n.scene(b.sceneId)}`, b.lighting, b.labels.join(t.listSep), b.characters.map(n.char).join(t.listSep), b.props.map(n.prop).join(t.listSep)]));
   }
   out.push('', `## ${t.secDialogue}`, '', mdHead(t.dialogueCols));
-  for (const d of stats.dialogue) out.push(mdRow([`${d.segment}#${d.cut}`, n.char(d.speaker), d.line, d.seconds]));
+  for (const d of stats.dialogue) out.push(mdRow([`${d.label}#${d.cut}`, n.char(d.speaker), d.line, d.seconds]));
   out.push('');
   return out.join('\n');
 }
@@ -1270,7 +1405,7 @@ export function renderMarkdown(board, ctx = {}) {
 /*
  * 与另外四份报告同一套视觉语言。设计约定见 references/report-style.md。
  * 图片是用户在下游出好的素材，位置由 CLI 注入的 ctx.image(kind, rel) 决定：
- * kind 是 'frame'（<段号>/f<切序>.png）或 'sheet'（<场景 slug>-sheet.png），
+ * kind 是 'frame'（<段 id>/<切 id>.png）或 'sheet'（<场景 slug>-sheet.png），
  * 返回 src 或 null。有就内嵌显示 + 点击放大，没有就显示占位——不猜、不骗。
  */
 
@@ -1341,12 +1476,13 @@ export function renderHtml(board, ctx = {}) {
     .map((ep, i) => {
       const st = stats.episodes[i];
       const groups = ep.segments
-        .map((seg) => {
+        .map((seg, si) => {
+          const label = segLabel(ep.ep, si);
           const segs = seg.cuts
             .map((cut, ci) => {
               const w = st.totalSeconds ? (cut.seconds / st.totalSeconds) * 100 : 0;
               const alpha = SIZE_ALPHA[cut.size] ?? 0.5;
-              return `<a class="seg" href="#seg-${esc(seg.id)}" style="width:${r1(w)}%;background:rgba(138,51,36,${alpha})" title="${esc(`${seg.id}#${ci + 1} · ${cut.seconds}s · ${t.sizeName(cut.size)} · ${cut.camera}`)}"></a>`;
+              return `<a class="seg" href="#seg-${esc(seg.id)}" style="width:${r1(w)}%;background:rgba(138,51,36,${alpha})" title="${esc(`${label}#${ci + 1} · ${cut.seconds}s · ${t.sizeName(cut.size)} · ${cut.camera}`)}"></a>`;
             })
             .join('');
           const gw = st.totalSeconds ? (segSeconds(seg) / st.totalSeconds) * 100 : 0;
@@ -1364,12 +1500,14 @@ export function renderHtml(board, ctx = {}) {
   const epBlocks = eps
     .map((ep, i) => {
       const st = stats.episodes[i];
-      const sEp = expanded.get(ep.ep);
+      const sEp = expanded.get(ep.id);
       const cards = ep.segments
-        .map((seg) => {
-          const scene = sEp?.scenes?.[seg.sceneIndex - 1];
+        .map((seg, si) => {
+          const label = segLabel(ep.ep, si);
+          const scene = sceneOf(sEp, seg.sceneRef);
           const starts = cutStarts(seg.cuts);
-          const frame = (ci) => (ctx.image ? ctx.image('frame', `${seg.id}/f${ci + 1}.png`) : null);
+          const claimed = seg.cuts.flatMap((cut) => cutBeats(cut, scene));
+          const frame = (ci) => (ctx.image ? ctx.image('frame', `${seg.id}/${seg.cuts[ci]?.id}.png`) : null);
           const has = (ci) => frame(ci) != null;
 
           // 主分镜图区：图出全的段保留原 master+subs 层级；有缺图的段每切一格——
@@ -1377,20 +1515,20 @@ export function renderHtml(board, ctx = {}) {
           const hasAll = seg.cuts.every((_, ci) => has(ci));
           let master, subs;
           if (hasAll) {
-            master = `<img class="frame" src="${esc(frame(0))}" alt="${esc(`${seg.id}#1`)}" loading="lazy">`;
+            master = `<img class="frame" src="${esc(frame(0))}" alt="${esc(`${label}#1`)}" loading="lazy">`;
             subs = seg.cuts.length > 1
               ? `<div class="subs">${seg.cuts
                   .slice(1)
-                  .map((cut, ci) => `<img class="subf" src="${esc(frame(ci + 1))}" alt="${esc(`${seg.id}#${ci + 2}`)}" loading="lazy">`)
+                  .map((cut, ci) => `<img class="subf" src="${esc(frame(ci + 1))}" alt="${esc(`${label}#${ci + 2}`)}" loading="lazy">`)
                   .join('')}</div>`
               : '';
           } else {
             master = `<div class="fquad">${seg.cuts
               .map((cut, ci) => {
-                const label = ci === 0 ? t.masterLabel : t.subLabel(ci + 1);
+                const slot = ci === 0 ? t.masterLabel : t.subLabel(ci + 1);
                 const body = has(ci)
-                  ? `<img class="frame" src="${esc(frame(ci))}" alt="${esc(`${seg.id}#${ci + 1}`)}" loading="lazy">`
-                  : `<div class="frame ph fcell"><div class="fcell-h"><b>${esc(`${label} · ${t.frameMissing(ci + 1)}`)}</b><button class="copy mini" data-copy="${esc(cut.frame ?? '')}">${esc(t.copy)}</button></div><span class="fprompt">${esc(cut.frame ?? '')}</span></div>`;
+                  ? `<img class="frame" src="${esc(frame(ci))}" alt="${esc(`${label}#${ci + 1}`)}" loading="lazy">`
+                  : `<div class="frame ph fcell"><div class="fcell-h"><b>${esc(`${slot} · ${t.frameMissing(ci + 1)}`)}</b><button class="copy mini" data-copy="${esc(cut.frame ?? '')}">${esc(t.copy)}</button></div><span class="fprompt">${esc(cut.frame ?? '')}</span></div>`;
                 return body;
               })
               .join('\n')}</div>`;
@@ -1427,11 +1565,11 @@ export function renderHtml(board, ctx = {}) {
 
           return `<article class="segcard" id="seg-${esc(seg.id)}">
   <header class="seg-h">
-    <b>${esc(seg.id)}</b>
+    <b>${esc(label)}</b><span class="sid">${esc(seg.id)}</span>
     <span class="sec-badge">${esc(t.secBadge(segSeconds(seg), seg.cuts.length))}</span>
     <span class="chip">${esc(scene ? `${scene.sceneId} ${n.scene(scene.sceneId)}` : '?')}</span>
     ${scene?.lighting ? `<span class="chip lite">${esc(scene.lighting)}</span>` : ''}
-    <span class="beatsref">${esc(t.beatsLabel(seg.sceneIndex, seg.cuts[0]?.beats?.[0], seg.cuts[seg.cuts.length - 1]?.beats?.[1]))}</span>
+    <span class="beatsref">${esc(t.beatsLabel(scene?.n ?? '?', claimed[0]?.n ?? '?', claimed[claimed.length - 1]?.n ?? '?'))}</span>
   </header>
   ${master}
   ${subs}
@@ -1476,7 +1614,7 @@ ${cards}
       return `<article class="batch">
   ${hasSheet ? `<img class="bimg" src="${esc(sheet)}" alt="${esc(n.scene(b.sceneId))}" loading="lazy">` : ''}
   <header class="batch-h"><b>${esc(t.batchLabel(String(i + 1).padStart(2, '0')))}</b><span class="chip">${esc(`${b.sceneId} ${n.scene(b.sceneId)}`)}</span>${b.lighting ? `<span class="chip lite">${esc(b.lighting)}</span>` : ''}</header>
-  <div class="batch-shots">${b.segments.map((s) => `<a class="chip mono" href="#seg-${esc(s)}">${esc(s)}</a>`).join('')}</div>
+  <div class="batch-shots">${b.segments.map((s, k) => `<a class="chip mono" href="#seg-${esc(s)}">${esc(b.labels[k])}</a>`).join('')}</div>
   <p class="batch-need">${esc(t.batchNeed(b.characters.map(n.char), b.props.map(n.prop)))}</p>
 </article>`;
     })
@@ -1484,7 +1622,7 @@ ${cards}
 
   // ---- 04 配音对齐单 ----
   const dlgRows = stats.dialogue
-    .map((d) => `<tr><td><a href="#seg-${esc(d.segment)}">${esc(d.segment)}</a> #${d.cut}</td><td>${esc(n.char(d.speaker))}</td><td class="serif">${esc(d.line)}</td><td>${d.seconds}</td></tr>`)
+    .map((d) => `<tr><td><a href="#seg-${esc(d.segment)}">${esc(d.label)}</a> #${d.cut}</td><td>${esc(n.char(d.speaker))}</td><td class="serif">${esc(d.line)}</td><td>${d.seconds}</td></tr>`)
     .join('\n');
 
   const gateList = `<ul class="gate">
@@ -1581,6 +1719,7 @@ section.top-sec{margin-top:34px}
 .segcard{background:var(--paper);border:1px solid var(--rule);border-radius:2px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
 .seg-h{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .seg-h b{font:500 14px/1 var(--mono);color:var(--seal)}
+.seg-h .sid{font:400 10.5px/1 var(--mono);color:var(--ink-3)}
 .sec-badge{font:500 11px/1 var(--mono);border:1px solid var(--seal);color:var(--seal);border-radius:99px;padding:2px 8px}
 .beatsref{margin-left:auto;font-size:10.5px;color:var(--ink-3)}
 .frame{width:100%;aspect-ratio:16/9;object-fit:cover;border:1px solid var(--rule-2);border-radius:2px;
@@ -1844,8 +1983,12 @@ document.querySelector('.expo').addEventListener('click', (e) => {
 
 const USAGE = `novel-storyboard.mjs — novel-storyboard skill 的确定性工具（分镜）
 
-  seed <script.json> [--eps 1-3]              从剧本预填节拍工作底稿（打印到 stdout）
+  seed <script.json> [--eps 1-3]              从剧本预填节拍工作底稿（打印到 stdout）；剧本必须已补场次、节拍 id
          [--aspect 16:9|9:16]                 正式画幅字段（默认 16:9）
+  ids <sb.json> [--script <script.json>]      给缺 id 的段、切补 id（集 id 从剧本照抄）；只补不改
+      [--write] [--seed <文本>]               默认打印结果，--write 原地写回；--seed 只用于样例与自测
+  migrate <2.x sb.json> --script <3.0 script.json>   2.x 迁移到 3.0：sceneIndex → sceneRef，beats → beatIds，补 id
+      [--write] [--seed <文本>]
   validate <sb.json> --script <script.json>   校验；有违规逐条打印并 exit 1
            [--outline] [--cast] [--art]       outline/cast 查提示词人名；art 只管显示名字
            [--shots <卡片目录>]                挂载镜头配方卡库，开 shot-recipe 门（不给就跳过）
@@ -1853,17 +1996,17 @@ const USAGE = `novel-storyboard.mjs — novel-storyboard skill 的确定性工�
           [--shots <卡片目录>]
   render <sb.json> --script <script.json>     渲染报告到 stdout（默认 --md）
          [--html|--md] [--outline] [--art]
-         [--frames <dir>]                     分镜图目录，找 <dir>/<段号>/f<切序>.png（默认当前目录）
+         [--frames <dir>]                     分镜图目录，找 <dir>/<段 id>/<切 id>.png（默认当前目录）
          [--images <dir>]                     场景设定图目录，找 <dir>/<场景 slug>-sheet.png（默认 ./images）
                                               两个目录都可以是任意路径；报告里的图片路径按「报告写在当前目录」计算
          [--lang zh|en]                       报告界面语言（默认 zh；未指定时读取 JSON 顶层 lang 字段）
          [--shots <卡片目录>]                  报告的「配方」列显示卡名并标注建议景别／运镜的偏离
          [--constraints <file>]               Seedance 全局约束，一行一条（程序补上无字幕、多人禁双胞胎）
   export <sb.json> --script <script.json>     导出投产包，每段一个文件夹
-         [--protocol h3|seedance]             h3（默认）：<段号>/prompt.md + f1..fN.png，根部 manifest.json
-                                              seedance：<段号>/seedance.md + 附件，根部 seedance-manifest.json
+         [--protocol h3|seedance]             h3（默认）：<段 id>/prompt.md + <切 id>.png，根部 manifest.json
+                                              seedance：<段 id>/seedance.md + 附件，根部 seedance-manifest.json
          [--out .]                            输出目录
-         [--frames <dir>]                     从这里把 <段号>/f<切序>.png 拷进投产包；不给就只认包里现成的图
+         [--frames <dir>]                     从这里把 <段 id>/<切 id>.png 拷进投产包；不给就只认包里现成的图
          [--images <dir>]                     Seedance 参考图路径的设定图目录（默认 ./images），找到就拷进包
          [--outline] [--art] [--constraints]  名字与全局约束，同 render
   stats                                       读当前目录的 .gates.jsonl，汇总哪道门最常响、
@@ -1895,6 +2038,17 @@ function loadShots(dir) {
   const cards = loadRecipes(dir);
   if (!cards.size) throw new Error(`--shots ${dir} 里没读到卡片（.md）——请指向 shot-recipes/references/cards`);
   return cards;
+}
+
+/** 与样例文件同一个格式写回（2 空格缩进 + 结尾换行），git diff 只显示真正的改动。 */
+function writeOrPrint(path, doc, write, note) {
+  const text = JSON.stringify(doc, null, 2) + '\n';
+  if (!write) {
+    process.stdout.write(text);
+    return;
+  }
+  writeFileSync(resolve(path), text, 'utf8');
+  console.error(note);
 }
 
 function loadCtx(rest) {
@@ -1967,13 +2121,13 @@ function main(argv) {
       if (ctx.recipes) {
         const drifted = [];
         for (const ep of board?.episodes ?? []) {
-          for (const seg of ep?.segments ?? []) {
+          for (const [si, seg] of (ep?.segments ?? []).entries()) {
             (seg?.cuts ?? []).forEach((cut, ci) => {
               const card = typeof cut?.recipe === 'string' ? ctx.recipes.get(cut.recipe) : null;
               if (!card) return;
               const d = recipeDrift(cut, card);
               if (d.sizes.length || d.cameras.length) {
-                drifted.push(`  ${seg.id}#${ci + 1}「${card.name}」${I18N.zh.recipeDrift(d.sizes, d.cameras)}`);
+                drifted.push(`  ${segLabel(ep.ep, si)}#${ci + 1}「${card.name}」${I18N.zh.recipeDrift(d.sizes, d.cameras)}`);
               }
             });
           }
@@ -2032,14 +2186,14 @@ function main(argv) {
       const from = resolve(framesFlag);
       for (const ep of board?.episodes ?? []) {
         for (const seg of ep?.segments ?? []) {
-          (seg.cuts ?? []).forEach((_, i) => {
-            const src = join(from, seg.id, `f${i + 1}.png`);
-            const dst = resolve(dir, seg.id, `f${i + 1}.png`);
-            if (!existsSync(src) || src === dst) return;
+          for (const cut of seg.cuts ?? []) {
+            const src = join(from, seg.id, `${cut.id}.png`);
+            const dst = resolve(dir, seg.id, `${cut.id}.png`);
+            if (!existsSync(src) || src === dst) continue;
             mkdirSync(resolve(dst, '..'), { recursive: true });
             copyFileSync(src, dst);
             copied += 1;
-          });
+          }
         }
       }
     }
@@ -2098,6 +2252,22 @@ function main(argv) {
       console.log(`从没响过的门（${s.silent.length} / ${allGates.length}）——可能是死门，也可能规则已经被模型内化：`);
       console.log('  ' + s.silent.join(' / '));
     }
+    return;
+  }
+
+  if (cmd === 'ids' || cmd === 'migrate') {
+    const [path] = rest;
+    const scriptPath = flag(rest, '--script');
+    if (!path || (cmd === 'migrate' && !scriptPath)) {
+      throw new Error(cmd === 'migrate' ? '用法：migrate <2.x storyboard.json> --script <3.0 script.json> [--write] [--seed <文本>]' : '用法：ids <storyboard.json> [--script s.json] [--write] [--seed <文本>]');
+    }
+    const seed = flag(rest, '--seed');
+    const rng = seed ? seededRng(seed) : cryptoRng;
+    const script = scriptPath ? readJson(scriptPath) : null;
+    const before = readJson(path);
+    const after = cmd === 'migrate' ? migrateStoryboard(before, script, rng) : assignStoryboardIds(before, { script, rng });
+    const added = collectIds(after).size - collectIds(before).size;
+    writeOrPrint(path, after, rest.includes('--write'), `✓ 补了 ${added} 个 id`);
     return;
   }
 
