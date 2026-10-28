@@ -4,11 +4,16 @@
 //   node scripts/selftest.mjs
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isId, seededRng } from './ids.mjs';
 import {
   ADAPT_MODES,
+  assignOutlineIds,
+  renumberOutline,
   DEFAULT_PER_VOLUME,
   DEFAULT_THRESHOLDS,
   MAX_VOLUMES,
@@ -81,7 +86,7 @@ eq(validateOutline(FIXTURE).length, 0, '自带样例通过 full 校验');
 eq(validateOutline(FIXTURE, 'skeleton').length, 0, '样例通过 skeleton 校验');
 eq(validateOutline(FIXTURE, 'beats').length, 0, '样例通过 beats 校验');
 ok(gateReport(FIXTURE).every((g) => g.ok), '样例全部质量门通过');
-eq(gateReport(FIXTURE).length, 14, '质量门共 14 项');
+eq(gateReport(FIXTURE).length, 15, '质量门共 15 项');
 
 /* ---------------- props 叙事道具 ---------------- */
 
@@ -104,7 +109,7 @@ eq(gateReport(FIXTURE).length, 14, '质量门共 14 项');
   ok(gate(old, 'prop-cap').detail.includes('跳过'), '跳过要明说，不静默');
   ok(gate(old, 'refs').ok, '旧大纲的引用门照常通过');
   ok(!gate(old, 'refs').label.includes('道具'), '没有 props 时 refs 门的措辞不提道具');
-  eq(gateReport(old).length, 14, '旧大纲的门数一样是 14，跳过不等于少一道门');
+  eq(gateReport(old).length, 15, '旧大纲的门数一样是 15，跳过不等于少一道门');
 
   // --- 击穿：propIds 指向不存在的道具 ---
   const a = clone(); a.episodes[0].propIds = ['P09'];
@@ -594,7 +599,7 @@ ok(html.includes('人群 ×1（第 2 集）'), '折算表带生成难点明细')
 }
 
 ok((html.match(/class="gate"/g) || []).length === 1, '质量门清单');
-eq((html.match(/<li class="ok">/g) || []).length, 14, '14 项质量门全 ✓');
+eq((html.match(/<li class="ok">/g) || []).length, 15, '15 项质量门全 ✓');
 ok(html.includes('全部通过'), '通过时有总结行');
 ok(html.includes('gatepill pass'), '页眉徽章是通过态');
 
@@ -690,5 +695,149 @@ ok(enMd.includes('**[Hook]**') && !enMd.includes('**【钩子】**'), 'EN MD 钩
 }
 
 eq(DEFAULT_PER_VOLUME, 15, '默认每卷 15 章');
+
+/* ---------------- 稳定 id ---------------- */
+// 集的身份是 id，集号是显示缓存；爽点按 episodeRef 归属，episode 集号由门查一致。
+
+{
+  ok(gate(FIXTURE, 'ids').ok, '样例的 id 门通过');
+  eq(gateReport(FIXTURE)[0].id, 'ids', 'id 门排第一道');
+  ok(FIXTURE.episodes.every((e) => isId(e.id, 'ep')), '样例每集都有集 id');
+  ok(FIXTURE.beats.every((b) => isId(b.episodeRef, 'ep')), '样例每个爽点都有 episodeRef');
+  const byId = new Map(FIXTURE.episodes.map((e) => [e.id, e.ep]));
+  ok(FIXTURE.beats.every((b) => byId.get(b.episodeRef) === b.episode), '样例的爽点集号与归属一致');
+
+  // --- 击穿 ---
+  const noId = clone(); delete noId.episodes[2].id;
+  ok(!gate(noId, 'ids').ok && gate(noId, 'ids').detail.includes('第 3 集缺 id'), '缺集 id 被拦并点名');
+  const badId = clone(); badId.episodes[0].id = 'ep_1';
+  ok(!gate(badId, 'ids').ok && gate(badId, 'ids').detail.includes('格式不对'), '集 id 格式错被拦');
+  const dup = clone(); dup.episodes[1].id = dup.episodes[0].id;
+  ok(!gate(dup, 'ids').ok && gate(dup, 'ids').detail.includes('重复'), '集 id 重复被拦');
+  const dangling = clone(); dangling.beats[0].episodeRef = 'ep_zzzzzzzz';
+  ok(!gate(dangling, 'ids').ok && gate(dangling, 'ids').detail.includes(`${dangling.beats[0].id} 的 episodeRef 不在分集里`), 'episodeRef 悬空被拦');
+  const drift = clone(); drift.beats[1].episode = drift.beats[1].episode === 1 ? 2 : 1;
+  ok(!gate(drift, 'ids').ok && gate(drift, 'ids').detail.includes(drift.beats[1].id), '集号与归属不一致被拦并点名爽点');
+  const unbound = clone(); delete unbound.beats[0].episodeRef;
+  ok(!gate(unbound, 'ids').ok && gate(unbound, 'ids').detail.includes('ids --write'), '爽点缺 episodeRef 被拦并提示运行 ids');
+  const noEps = clone(); noEps.episodes = [];
+  for (const b of noEps.beats) delete b.episodeRef;
+  ok(!gate(noEps, 'ids').ok, '还没写分集时 id 门不算通过');
+  eq(validateOutline(noEps, 'beats').length, 0, '但 beats 档不受 id 门影响——那时分集还没写');
+  ok(validateOutline(noId).some((x) => x.includes('第 3 集缺 id')), 'full 档带出 id 门的失败');
+}
+
+// --- 补 id：只补缺的，不改入参，可复现 ---
+{
+  const raw = clone();
+  for (const e of raw.episodes) delete e.id;
+  for (const b of raw.beats) delete b.episodeRef;
+  raw.episodes[0].id = 'ep_00000001';
+  const before = JSON.stringify(raw);
+  const a = assignOutlineIds(raw, seededRng('t'));
+  eq(JSON.stringify(raw), before, 'assignOutlineIds 不改入参');
+  eq(a.episodes[0].id, 'ep_00000001', '已有集 id 不动');
+  ok(a.episodes.every((e) => isId(e.id, 'ep')), '缺的集 id 都补上');
+  ok(gate(a, 'ids').ok, '补完后 id 门通过');
+  eq(JSON.stringify(assignOutlineIds(raw, seededRng('t'))), JSON.stringify(a), '同一种子结果可复现');
+  const pinned = clone(); pinned.beats[0].episodeRef = pinned.episodes[5].id; pinned.beats[0].episode = 6;
+  eq(assignOutlineIds(pinned, seededRng('t')).beats[0].episodeRef, pinned.episodes[5].id, '已有的 episodeRef 不改');
+}
+
+// --- 插入一集：门逼着 renumber，爽点跟着原来那一集走 ---
+{
+  const o = clone();
+  const third = o.episodes[2];
+  const ownedByThird = o.beats.filter((b) => b.episodeRef === third.id).map((b) => b.id);
+  const fresh = structuredClone(o.episodes[1]);
+  delete fresh.id;
+  fresh.ep = null;
+  o.episodes.splice(2, 0, fresh);
+  const withIds = assignOutlineIds(o, seededRng('insert'));
+  ok(isId(withIds.episodes[2].id, 'ep') && withIds.episodes[3].id === third.id, '新插入的集补上 id，原第 3 集 id 不变');
+  ok(validateOutline(withIds).some((x) => x.includes('编号必须从 1 连续')), '插入后不 renumber 过不了校验');
+  const re = renumberOutline(withIds);
+  ok(re.episodes.every((e, i) => e.ep === i + 1), 'renumber 后集号等于位置');
+  eq(re.episodes[3].ep, 4, '原第 3 集现在是第 4 集');
+  ok(re.beats.filter((b) => ownedByThird.includes(b.id)).every((b) => b.episode === 4 && b.episodeRef === third.id), '原来挂在第 3 集的爽点跟着变成第 4 集，归属不变');
+  eq(re.params.episodes, 7, 'params.episodes 跟着集数更新');
+  ok(gate(re, 'ids').ok, 'renumber 后 id 门通过');
+}
+
+// --- 插集撞号：新旧两集同号时，按集号补归属会挂错集，ids 必须拒绝 ---
+{
+  const o = clone();
+  const oldSecond = o.episodes[1].id;
+  const fresh = structuredClone(o.episodes[1]);
+  delete fresh.id;
+  o.episodes.splice(1, 0, fresh); // 作者给新集也写了 ep: 2，与原第 2 集同号
+  const extra = { ...structuredClone(o.beats[0]), id: 'B99', episode: 2 };
+  delete extra.episodeRef;
+  o.beats.push(extra);
+  let msg = '';
+  try { assignOutlineIds(o, seededRng('clash')); } catch (e) { msg = e.message; }
+  ok(msg.includes('集号和位置对不上') && msg.includes('先运行 renumber --write'), '集号和位置对不上时 ids 拒绝按集号补爽点归属');
+  const fixed = assignOutlineIds(renumberOutline(o), seededRng('clash'));
+  eq(fixed.beats.at(-1).episodeRef, fixed.episodes[1].id, '先 renumber 再 ids：新爽点挂到新插入的那一集');
+  ok(fixed.episodes[1].id !== oldSecond && fixed.episodes[2].id === oldSecond, '原第 2 集 id 不变，现在是第 3 位');
+  ok(gate(fixed, 'ids').ok, '先 renumber 再 ids 后 id 门通过');
+}
+
+// --- renumber：还没 id 的集不会吞掉缺归属的爽点 ---
+{
+  const o = clone();
+  const fresh = structuredClone(o.episodes[0]);
+  delete fresh.id;
+  o.episodes.splice(1, 0, fresh);
+  const loose = { ...structuredClone(o.beats[0]), id: 'B98', episode: 5 };
+  delete loose.episodeRef;
+  o.beats.push(loose);
+  eq(renumberOutline(o).beats.at(-1).episode, 5, '缺 episodeRef 的爽点集号原样保留，不被改成缺 id 那一集');
+}
+
+// --- CLI ---
+{
+  const SCRIPT = join(here, 'novel-outline.mjs');
+  const dir = mkdtempSync(join(tmpdir(), 'outline-ids-'));
+  const raw = clone();
+  for (const e of raw.episodes) delete e.id;
+  for (const b of raw.beats) delete b.episodeRef;
+  const file = join(dir, 'outline.json');
+  writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+
+  const printed = run('ids', file, '--seed', 'cli');
+  eq(printed.status, 0, 'ids 不带 --write 正常退出');
+  ok(JSON.parse(printed.stdout).episodes.every((e) => isId(e.id, 'ep')), 'ids 打印补好 id 的 JSON');
+  eq(readFileSync(file, 'utf8'), JSON.stringify(raw, null, 2) + '\n', '不带 --write 不改文件');
+  eq(run('migrate', file, '--seed', 'cli').stdout, printed.stdout, 'migrate 与 ids 输出相同');
+
+  const wrote = run('ids', file, '--seed', 'cli', '--write');
+  eq(wrote.status, 0, 'ids --write 正常退出');
+  ok(wrote.stderr.includes('补了 6 个集 id'), '写回时报告补了多少');
+  const once = readFileSync(file, 'utf8');
+  run('ids', file, '--write');
+  eq(readFileSync(file, 'utf8'), once, 'ids 幂等：再跑一次不变');
+  eq(run('validate', file).status, 0, '补完 id 后 validate 通过');
+
+  const ins = JSON.parse(once);
+  const extra = structuredClone(ins.episodes[0]);
+  delete extra.id;
+  extra.ep = 0;
+  ins.episodes.splice(1, 0, extra);
+  writeFileSync(file, JSON.stringify(ins, null, 2) + '\n');
+  run('ids', file, '--write');
+  eq(run('validate', file).status, 1, '插入一集后不 renumber 校验不通过');
+  eq(run('renumber', file, '--write').status, 0, 'renumber --write 正常退出');
+  eq(run('validate', file).status, 0, 'renumber 后校验通过');
+
+  // 不带 --seed 走加密随机：两个项目各补一次，id 不能撞
+  const idsOf = () => JSON.parse(run('ids', bare).stdout).episodes.map((e) => e.id);
+  const bare = join(dir, 'bare.json');
+  writeFileSync(bare, JSON.stringify(raw, null, 2) + '\n');
+  const [x, y] = [idsOf(), idsOf()];
+  ok(x.every((id) => isId(id, 'ep')) && !x.some((id) => y.includes(id)), '不带 --seed 两次补出的 id 互不相同');
+  rmSync(dir, { recursive: true, force: true });
+}
 
 console.log(`✓ ${passed} 项自测全部通过`);

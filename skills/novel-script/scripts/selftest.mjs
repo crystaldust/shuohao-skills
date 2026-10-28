@@ -4,11 +4,17 @@
 // 证明它真的会拦，不是一个永远为真的假测试。
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isId, seededRng } from './ids.mjs';
 import {
   DEFAULT_PARAMS,
+  assignScriptIds,
+  migrateScript,
+  renumberScript,
   computeStats,
   gateReport,
   lineChars,
@@ -89,7 +95,7 @@ ok(voEntry.lines[0].sceneId === 'S01', '台词条目带场景');
 
 ok(gateReport(FIXTURE, CTX).every((g) => g.ok), '样例带上游全部门通过');
 ok(gateReport(FIXTURE).every((g) => g.ok), '不带上游也全部通过（对账门跳过）');
-eq(gateReport(FIXTURE).length, 10, '十道门');
+eq(gateReport(FIXTURE).length, 11, '十一道门');
 
 /* ---------------- 质量门：逐门击穿 ---------------- */
 
@@ -155,19 +161,30 @@ eq(gateReport(FIXTURE).length, 10, '十道门');
 }
 {
   const doc = clone(FIXTURE);
-  doc.episodes[0].hookBeat = [2, 1]; // 第 2 场第 1 拍 = 全集第 14 拍
+  doc.episodes[0].hookBeat = doc.episodes[0].scenes[1].flow[0].id; // 第 2 场第 1 拍 = 全集第 14 拍
   const g = gate(doc, 'hook-open');
   ok(!g.ok, '钩子落在第 14 拍被拦——冷开场是门不是建议');
   ok(g.detail.includes('第 14 拍'), '报出实际位置');
 }
 {
   const doc = clone(FIXTURE);
-  doc.episodes[0].hookBeat = [9, 9];
-  ok(gate(doc, 'hook-open').detail.includes('不存在'), '指向不存在的节拍被拦');
+  doc.episodes[0].hookBeat = 'bt_zzzzzzzz';
+  ok(gate(doc, 'hook-open').detail.includes('不在这一集里'), '指向不存在的节拍被拦');
 }
 {
   const doc = clone(FIXTURE);
-  doc.episodes[0].hookBeat = [2, 1];
+  doc.episodes[0].hookBeat = doc.episodes[1].scenes[0].flow[0].id;
+  ok(gate(doc, 'hook-open').detail.includes('不在这一集里'), '指向别的集的节拍也被拦');
+}
+{
+  const doc = clone(FIXTURE);
+  doc.episodes[0].hookBeat = [1, 1];
+  const g = gate(doc, 'hook-open');
+  ok(!g.ok && g.detail.includes('3.0 起写节拍 id'), '2.x 的 [场, 拍] 写法被拦，并提示改写节拍 id');
+}
+{
+  const doc = clone(FIXTURE);
+  doc.episodes[0].hookBeat = doc.episodes[0].scenes[1].flow[0].id;
   doc.params = { hookWindow: 20 };
   ok(gate(doc, 'hook-open').ok, '钩子窗口可按需放宽');
 }
@@ -282,6 +299,15 @@ ok(validateScript(clone(FIXTURE)).length === 0, '不带上游校验也通过');
 
 const seeded = seedFromOutline(OUTLINE);
 eq(seeded.source, '渡口', 'seed 带书名');
+eq(seeded.episodes[0].id, OUTLINE.episodes[0].id, 'seed 照抄大纲的集 id');
+eq(Object.keys(seeded.episodes[0])[0], 'id', '集 id 排在第一个键');
+{
+  const noIds = clone(OUTLINE);
+  delete noIds.episodes[0].id;
+  let msg = '';
+  try { seedFromOutline(noIds); } catch (e) { msg = e.message; }
+  ok(msg.includes('ids --write'), '大纲缺集 id 时 seed 拒绝，并提示先补 id');
+}
 eq(seeded.episodes.length, 6, 'seed 全六集');
 eq(seeded.episodes[0].targetSeconds, 120, '目标秒数 = 每集分钟 × 60');
 eq(seeded.episodes[0].hook, OUTLINE.episodes[0].hook, '钩子从大纲搬');
@@ -327,7 +353,7 @@ ok(html.includes('分集剧本'), '02 分集剧本');
 ok(html.includes('场次总表'), '03 场次总表');
 ok(html.includes('台词本'), '04 台词本');
 ok(html.includes('质量门'), '05 质量门');
-ok(html.includes('✓ 质量门 10 / 10'), '页眉徽章全绿');
+ok(html.includes('✓ 质量门 11 / 11'), '页眉徽章全绿');
 ok(html.includes('class="band"'), '时长条带目标区间');
 ok(html.includes('导出 JSON'), '导出按钮在');
 ok(html.includes('id="script-data"'), '数据内嵌');
@@ -370,7 +396,7 @@ ok(html.includes('lang="zh"'), '默认报告 html lang 是 zh');
   const en = renderHtml(FIXTURE, { ...CTX, lang: 'en' });
   ok(en.includes('lang="en"'), 'en 报告的 html lang 属性正确');
   ok(en.includes('Export JSON'), 'en 导出按钮标签');
-  ok(en.includes('Quality gates 10 / 10'), 'en 页眉徽章全绿');
+  ok(en.includes('Quality gates 11 / 11'), 'en 页眉徽章全绿');
   ok(en.includes('Line book'), 'en 台词本标题');
   ok(en.includes('Duration gauge'), 'en 时长仪表标题');
   ok(!en.includes('导出 JSON'), 'en 报告不含中文导出标签');
@@ -419,5 +445,149 @@ ok(html.includes('lang="zh"'), '默认报告 html lang 是 zh');
   const gateEn = renderHtml(FIXTURE, { ...CTX, lang: 'en' });
   ok(gateEn.includes('Episode duration within'), 'EN 报告的质量门标签翻译且阈值原样保留');
   ok(!gateEn.includes('每集时长在目标'), 'EN 报告不再出现中文门标签');
+}
+
+/* ---------------- 稳定 id ---------------- */
+// 集 id 照抄大纲；场次、节拍由 ids 分配；hookBeat 指向节拍 id；显示用的集号由门对照大纲。
+
+{
+  ok(gate(FIXTURE, 'ids').ok && gate(FIXTURE, 'ids', CTX).ok, '样例的 id 门通过（带不带上游都过）');
+  eq(gateReport(FIXTURE)[0].id, 'ids', 'id 门排第一道');
+  const scenes = FIXTURE.episodes.flatMap((e) => e.scenes);
+  ok(FIXTURE.episodes.every((e) => isId(e.id, 'ep')), '每集都有集 id');
+  ok(scenes.every((s) => isId(s.id, 'sc')), '每场都有场次 id');
+  ok(scenes.every((s) => s.flow.every((b) => isId(b.id, 'bt'))), '每拍都有节拍 id');
+  ok(FIXTURE.episodes.every((e) => isId(e.hookBeat, 'bt')), 'hookBeat 都是节拍 id');
+  ok(FIXTURE.episodes.every((e) => OUTLINE.episodes.some((o) => o.id === e.id && o.ep === e.ep)), '集 id 与集号都对得上大纲');
+}
+{
+  const ids = (doc, ctx = {}) => gate(doc, 'ids', ctx);
+  const a = clone(FIXTURE); delete a.episodes[0].scenes[1].id;
+  ok(!ids(a).ok && ids(a).detail.includes('第 1 集第 2 场缺 id'), '缺场次 id 被拦并点名');
+  const b = clone(FIXTURE); delete b.episodes[0].scenes[0].flow[2].id;
+  ok(!ids(b).ok && ids(b).detail.includes('第 1 集第 1 场第 3 拍缺 id'), '缺节拍 id 被拦并点名');
+  const c = clone(FIXTURE); c.episodes[0].scenes[0].id = 'S02';
+  ok(!ids(c).ok && ids(c).detail.includes('格式不对'), '场次 id 格式错被拦');
+  const d = clone(FIXTURE); d.episodes[1].scenes[0].flow[0].id = d.episodes[0].scenes[0].flow[0].id;
+  ok(!ids(d).ok && ids(d).detail.includes('重复'), '节拍 id 跨集重复也被拦');
+  const e = clone(FIXTURE); delete e.episodes[2].id;
+  ok(!ids(e).ok && ids(e).detail.includes('第 3 集缺集 id'), '缺集 id 被拦');
+  const f = clone(FIXTURE); f.episodes[0].id = 'ep_zzzzzzzz';
+  ok(ids(f).ok, '不给大纲时不核对集 id 归属');
+  ok(!ids(f, CTX).ok && ids(f, CTX).detail.includes('不在大纲里'), '给了大纲：集 id 不在大纲里被拦');
+  const g = clone(FIXTURE); g.episodes[0].ep = 2;
+  ok(!ids(g, CTX).ok && ids(g, CTX).detail.includes('大纲里是第 1 集'), '给了大纲：集号与大纲不一致被拦');
+}
+{
+  // 爽点认领按 episodeRef 对上：把大纲的身份揭破挪到第 2 集，第 2 集就欠一个认领
+  const outline = clone(OUTLINE);
+  const b02 = outline.beats.find((b) => b.id === 'B02');
+  b02.episodeRef = outline.episodes[1].id;
+  b02.episode = 2;
+  const g = gate(FIXTURE, 'beats-claimed', { outline, art: ART });
+  ok(!g.ok && g.detail.includes('第 2 集缺「身份揭破」'), '爽点按集 id 归属对账');
+}
+{
+  // 补 id：只补缺的，不改入参，可复现；集 id 只能从大纲来
+  const raw = clone(FIXTURE);
+  for (const ep of raw.episodes) {
+    delete ep.id;
+    for (const sc of ep.scenes) { delete sc.id; for (const bt of sc.flow) delete bt.id; }
+  }
+  raw.episodes[0].scenes[0].id = 'sc_00000001';
+  const before = JSON.stringify(raw);
+  const out = assignScriptIds(raw, { outline: OUTLINE, rng: seededRng('t') });
+  eq(JSON.stringify(raw), before, 'assignScriptIds 不改入参');
+  eq(out.episodes[0].scenes[0].id, 'sc_00000001', '已有场次 id 不动');
+  ok(out.episodes.every((e, i) => e.id === OUTLINE.episodes[i].id), '集 id 按集号从大纲照抄');
+  ok(out.episodes.flatMap((e) => e.scenes).every((s) => isId(s.id, 'sc') && s.flow.every((x) => isId(x.id, 'bt'))), '场次与节拍 id 都补上');
+  eq(JSON.stringify(assignScriptIds(raw, { outline: OUTLINE, rng: seededRng('t') })), JSON.stringify(out), '同一种子可复现');
+  ok(assignScriptIds(raw, { rng: seededRng('t') }).episodes.every((e) => e.id === undefined), '不给大纲就不补集 id——集 id 只能来自大纲');
+}
+{
+  // 插一拍：只多一个新 id；hookBeat 跟着原来那一拍，全集位置后移
+  const doc = clone(FIXTURE);
+  const hb = doc.episodes[0].hookBeat;
+  doc.episodes[0].scenes[0].flow.unshift({ action: '雾里传来一声船笛。' });
+  const out = assignScriptIds(doc, { outline: OUTLINE, rng: seededRng('insert') });
+  const before = new Set(JSON.stringify(FIXTURE).match(/"(sc|bt)_[0-9a-z]{8}"/g));
+  const after = JSON.stringify(out).match(/"(sc|bt)_[0-9a-z]{8}"/g).filter((x) => !before.has(x));
+  eq(after.length, 1, '插一拍只多出一个新 id');
+  eq(out.episodes[0].hookBeat, hb, 'hookBeat 仍指向原来那一拍');
+  ok(renderMarkdown(out, CTX).includes('第 1 场第 2 拍兑现'), '钩子显示的位置跟着后移');
+}
+{
+  // 2.x 迁移：补 id，hookBeat [场, 拍] 换成节拍 id
+  const old = clone(FIXTURE);
+  for (const ep of old.episodes) {
+    delete ep.id;
+    for (const sc of ep.scenes) { delete sc.id; for (const bt of sc.flow) delete bt.id; }
+    ep.hookBeat = [1, 1];
+  }
+  const m = migrateScript(old, OUTLINE, seededRng('m'));
+  ok(m.episodes.every((e) => e.hookBeat === e.scenes[0].flow[0].id), 'hookBeat [1, 1] 换成第一场第一拍的 id');
+  ok(gate(m, 'ids', CTX).ok && gate(m, 'hook-open').ok, '迁移结果过 id 门与钩子门');
+  const bad = clone(old); bad.episodes[0].hookBeat = [9, 9];
+  let msg = '';
+  try { migrateScript(bad, OUTLINE, seededRng('m')); } catch (e) { msg = e.message; }
+  ok(msg.includes('第 1 集的 hookBeat [9, 9]'), 'hookBeat 指向不存在的节拍时迁移报错点名');
+  msg = '';
+  try { migrateScript(old, null); } catch (e) { msg = e.message; }
+  ok(msg.includes('--outline'), '迁移必须给大纲');
+}
+{
+  // 补 id 时新 id 计入已用集合：随机源连出两次同样的值，第二拍必须重抽
+  const doc = clone(FIXTURE);
+  delete doc.episodes[0].scenes[0].flow[0].id;
+  delete doc.episodes[0].scenes[1].flow[0].id;
+  let n = 0;
+  const repeating = () => (n++ < 16 ? 0 : 1);
+  const out = assignScriptIds(doc, { outline: OUTLINE, rng: repeating });
+  const [a, b] = [out.episodes[0].scenes[0].flow[0].id, out.episodes[0].scenes[1].flow[0].id];
+  ok(isId(a, 'bt') && isId(b, 'bt') && a !== b, '跨场补的节拍 id 不撞号');
+}
+{
+  // 大纲在第 2 集前插了一集并 renumber：剧本按集 id 刷新集号
+  const outline = clone(OUTLINE);
+  outline.episodes.splice(1, 0, { ...clone(outline.episodes[1]), id: 'ep_zzzzzzzz' });
+  outline.episodes = outline.episodes.map((e, i) => ({ ...e, ep: i + 1 }));
+  const ctx = { ...CTX, outline };
+  ok(!gate(FIXTURE, 'ids', ctx).ok, '大纲插集后剧本的集号被 ids 门点名');
+  const before = JSON.stringify(FIXTURE);
+  const re = renumberScript(FIXTURE, outline);
+  eq(JSON.stringify(FIXTURE), before, 'renumberScript 不改入参');
+  eq(re.episodes.map((e) => e.ep).join(','), '1,3,4,5,6,7', '集号改成大纲里的集号');
+  ok(re.episodes.every((e, i) => e.id === FIXTURE.episodes[i].id), '集 id 不动');
+  ok(gate(re, 'ids', ctx).ok, 'renumber 后 ids 门通过');
+  const orphan = clone(FIXTURE); orphan.episodes[0].id = 'ep_yyyyyyyy';
+  eq(renumberScript(orphan, outline).episodes[0].ep, 1, '集 id 不在大纲里的集原样保留（交给 ids 门点名）');
+}
+{
+  // CLI
+  const SCRIPT = join(here, 'novel-script.mjs');
+  const OUTLINE_PATH = join(here, '../references/test-fixtures/upstream/渡口-outline.json');
+  const dir = mkdtempSync(join(tmpdir(), 'script-ids-'));
+  const file = join(dir, 'script.json');
+  const raw = clone(FIXTURE);
+  for (const sc of raw.episodes[0].scenes) delete sc.id;
+  writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+  const printed = run('ids', file, '--outline', OUTLINE_PATH, '--seed', 'cli');
+  eq(printed.status, 0, 'ids 正常退出');
+  ok(JSON.parse(printed.stdout).episodes[0].scenes.every((s) => isId(s.id, 'sc')), 'ids 打印补好 id 的 JSON');
+  const fresh = JSON.parse(run('ids', file).stdout).episodes[0].scenes.map((s) => s.id);
+  ok(fresh.every((id) => isId(id, 'sc')) && !fresh.some((id) => JSON.parse(printed.stdout).episodes[0].scenes.some((s) => s.id === id)), '不带 --seed 走加密随机，与带种子的结果不同');
+  const again = JSON.parse(run('ids', file).stdout).episodes[0].scenes.map((s) => s.id);
+  ok(!again.some((id) => fresh.includes(id)), '不带 --seed 两次补出的 id 互不相同');
+  eq(run('ids', file, '--outline', OUTLINE_PATH, '--seed', 'cli', '--write').status, 0, 'ids --write 正常退出');
+  const once = readFileSync(file, 'utf8');
+  ok(once !== JSON.stringify(raw, null, 2) + '\n' && JSON.parse(once).episodes[0].scenes.every((s) => isId(s.id, 'sc')), 'ids --write 真的写回了文件');
+  run('ids', file, '--write');
+  eq(readFileSync(file, 'utf8'), once, 'ids 幂等');
+  eq(run('migrate', file).status, 1, 'migrate 缺 --outline 报错');
+  eq(run('renumber', file).status, 1, 'renumber 缺 --outline 报错');
+  eq(run('renumber', file, '--outline', OUTLINE_PATH, '--write').status, 0, 'renumber --write 正常退出');
+  eq(readFileSync(file, 'utf8'), once, '集号本来就对时 renumber 不改文件');
+  rmSync(dir, { recursive: true, force: true });
 }
 console.log(`✓ ${passed} 项自测全部通过`);

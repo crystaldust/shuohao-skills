@@ -46,12 +46,12 @@
       },
       "usage": {
         "episodes": [
-          1,
-          2,
-          3,
-          4,
-          5,
-          6
+          "ep_mtg51p27",
+          "ep_vt1jgnz6",
+          "ep_t4vnthc9",
+          "ep_6t5x31q5",
+          "ep_5wp7ktp4",
+          "ep_4207pqxh"
         ],
         "beats": [
           "悬念钩",
@@ -98,8 +98,8 @@
       },
       "usage": {
         "episodes": [
-          1,
-          6
+          "ep_mtg51p27",
+          "ep_4207pqxh"
         ],
         "beats": [
           "悬念钩",
@@ -146,7 +146,7 @@
       },
       "usage": {
         "episodes": [
-          5
+          "ep_5wp7ktp4"
         ],
         "beats": [
           "反转"
@@ -202,12 +202,12 @@
       },
       "usage": {
         "episodes": [
-          1,
-          2,
-          3,
-          4,
-          5,
-          6
+          "ep_mtg51p27",
+          "ep_vt1jgnz6",
+          "ep_t4vnthc9",
+          "ep_6t5x31q5",
+          "ep_5wp7ktp4",
+          "ep_4207pqxh"
         ],
         "beats": [
           "悬念钩",
@@ -262,9 +262,9 @@
       },
       "usage": {
         "episodes": [
-          3,
-          4,
-          6
+          "ep_t4vnthc9",
+          "ep_6t5x31q5",
+          "ep_4207pqxh"
         ],
         "beats": [
           "身份揭破"

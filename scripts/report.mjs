@@ -17,7 +17,7 @@
  *   - **脚本串味**：各报告的脚本都是 `document.querySelector('.expo')` 这种全局查询。
  *     合成一页后只会命中第一个——五个导出按钮会全废。做法是给每份脚本套一层
  *     作用域代理，把查询限制在自己的 pane 内。
- *   - **图片路径**：各报告的图相对自己那份 json 的目录（`images/…`、`E01-01/f1.png`）。
+ *   - **图片路径**：各报告的图相对自己那份 json 的目录（`images/…`、`sg_…/ct_….png`）。
  *     合成后要按输出文件的位置重算。
  *
  * 用法见 USAGE。
@@ -76,7 +76,8 @@ export const PANES = [
     labelEn: 'Art',
     hint: '场景与道具',
     hintEn: 'Scenes & props',
-    needs: ['--cast'],
+    // --outline：出现集记的是集 id，给了大纲才能显示成集号
+    needs: ['--cast', '--outline'],
   },
   {
     id: 'script',
@@ -230,7 +231,7 @@ export function scopeHtml(body, prefix) {
 /**
  * 把相对图片路径按输出文件的位置重算。
  *
- * 各报告的图相对各自 json 所在目录（角色是 `images/…`，分镜是 `E01-01/f1.png`）。
+ * 各报告的图相对各自 json 所在目录（角色是 `images/…`，分镜是 `<段 id>/<切 id>.png`）。
  * 合成一页之后，浏览器按合并文件的位置解析，不重算就全是断图。
  * `data:` 与绝对地址原样不动。
  */

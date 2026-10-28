@@ -17,12 +17,13 @@ Outputs `script.json`, a Markdown script, and a self-contained `script-report.ht
 
 ![script-report.html](assets/report.webp)
 
-## Ten quality gates, all code
+## Eleven quality gates, all code
 
 Same stance as the other three skills in this repo: **a checklist the model grades itself on is worthless.**
 
 | Gate | Rule |
 | --- | --- |
+| **IDs complete and consistent** | episode IDs copied from the outline and numbers matching it (checked with `--outline`); every scene and beat has an ID, none repeated |
 | **Episode duration** | estimate within ±15% of `targetSeconds` (speed, per-beat seconds and tolerance all tunable via `params`) |
 | Line length | ≤ 35 chars — a line you can't say in one breath can't be generated either |
 | Speaker legality | speaker must be in the scene's cast, or explicitly `VO` |
@@ -69,6 +70,9 @@ One layer down comes the storyboard skill: shot numbers, per-shot duration, firs
 node scripts/novel-script.mjs seed outline.json --eps 1-3
 node scripts/novel-script.mjs validate script.json --outline outline.json --art art.json
 node scripts/novel-script.mjs checkup script.json
+node scripts/novel-script.mjs ids script.json --outline outline.json --write      # assign scene / beat IDs (episode IDs copied from the outline)
+node scripts/novel-script.mjs migrate old.json --outline outline.json --write     # migrate a 2.x script
+node scripts/novel-script.mjs renumber script.json --outline outline.json --write  # refresh episode numbers after the outline gains / loses an episode
 node scripts/novel-script.mjs render script.json --html --outline outline.json --art art.json --cast cast.json > script-report.html
 node scripts/novel-script.mjs render script.json --html --lang en --outline outline.json --art art.json > script-report.html
 ```
@@ -88,7 +92,7 @@ The report UI defaults to Chinese; `--lang en` renders it fully in English.
 node scripts/selftest.mjs
 ```
 
-154 assertions — timing engine, stats, gate-defeating cases, seed, rendering (both UI languages), export. No model calls, runs in about a second.
+206 assertions — timing engine, stats, gate-defeating cases, seed, rendering (both UI languages), export. No model calls, runs in about a second.
 
 The bundled example (`examples/渡口-script.json`) is a **complete 6-episode script** — 9 scenes, 123 lines, every episode inside the ±15% band, all gates passing against the outline and art fixtures.
 

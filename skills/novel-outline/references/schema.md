@@ -10,8 +10,8 @@
   "adaptation": { "core": "…", "keep": [], "cut": [], "merge": [], "risks": [] },
   "characters": [ { "id": "C01", "name": "…", "role": "…", "arc": "…", "from": ["原著…", "合并：…"] } ],
   "scenes": [ { "id": "S01", "name": "…", "primary": true, "reusePlan": "…" } ],
-  "beats": [ { "id": "B01", "type": "打脸", "weight": "major", "episode": 3, "setup": "…", "payoff": "…" } ],
-  "episodes": [ { "ep": 1, "synopsis": "…", "hook": "…", "suspense": "…", "sceneIds": ["S01"], "characterIds": ["C01"], "propIds": ["P01"], "crowdPlan": "…", "warnings": [] } ]
+  "beats": [ { "id": "B01", "type": "打脸", "weight": "major", "episode": 3, "episodeRef": "ep_k3f9q2xa", "setup": "…", "payoff": "…" } ],
+  "episodes": [ { "id": "ep_k3f9q2xa", "ep": 1, "synopsis": "…", "hook": "…", "suspense": "…", "sceneIds": ["S01"], "characterIds": ["C01"], "propIds": ["P01"], "crowdPlan": "…", "warnings": [] } ]
 }
 ```
 
@@ -81,11 +81,13 @@
 ## beats 爽点表
 
 - `id` 格式 `B01`；`type` 自由文本（打脸/揭破/反转…）；`weight` 只能 `major` / `minor`（缺省算 minor）
-- `episode` 是**唯一数据源**——分集不再列 beatIds，节奏条和资产清单都从这里算
+- `episode` 是作者写的集号——分集不再列 beatIds，节奏条和资产清单都从这里算
+- `episodeRef` 是这个爽点归属的集 id，**由 `ids` 按 `episode` 补上，不要手写**。补上之后它是真相，`episode` 是显示缓存：`ids` 门检查两者一致（`episodeRef` 指向的那一集的 `ep` 必须等于 `episode`），手工改了集号却没改归属会被拦下。写爽点表时分集还不存在，所以这一步在分集写完之后做
 - 硬规则：相邻爽点间隔 ≤ `maxBeatGap`，开头结尾无真空；**至少一个 major，且最早的 major 不能落在最后一集**
 
 ## episodes 分集梗概
 
+- `id` 是集 id，`ep_` 加 8 位字母数字（`ep_k3f9q2xa`），**由 `ids` 命令分配，不要自己编**；分配后永远不改。下游（剧本、美术、站位、分镜）都按它对账，不按集号
 - `ep` 从 1 连续编号，总数等于 `params.episodes`
 - `synopsis` / `hook` / `suspense` 三栏**都必填**——【钩子】【悬念】空了视为未完成
 - **叙述体**：三栏里出现 `「」『』“”` 引号对白就是在写剧本，越界，validate 会拦
@@ -98,7 +100,22 @@
 
 ```bash
 node scripts/novel-outline.mjs validate outline.json --stage skeleton|beats|full
-node scripts/novel-outline.mjs checkup outline.json   # 只打印 14 道质量门 ✓/✗
+node scripts/novel-outline.mjs checkup outline.json   # 只打印 15 道质量门 ✓/✗
 ```
 
 stage 就是流程门：骨架拍板前过 `skeleton`，**写分集之前必须过 `beats`**（爽点间隔和 major 时机错了，分集写完全废），交付前过 `full`。
+
+## 稳定 id 与插入一集
+
+集号只是用于显示的编号，身份是 `id`。顺序只看 `episodes` 数组里的位置。
+
+```bash
+node scripts/novel-outline.mjs ids outline.json --write        # 补集 id、补爽点归属（已有的不动）
+node scripts/novel-outline.mjs renumber outline.json --write   # 按位置重编集号，爽点集号跟着归属同步
+node scripts/novel-outline.mjs migrate old-outline.json --write # 2.x 大纲迁移到 3.0（等同 ids）
+```
+
+- **插入一集**：把新的一集放进数组（不写 `id`，`ep` 随便写），先运行 `renumber --write`：每集的 `ep` 改成位置 + 1，每个爽点的 `episode` 按 `episodeRef` 同步，`params.episodes` 跟着更新；再运行 `ids --write` 给新的一集补 id，新写的爽点这时按集号补上 `episodeRef`。顺序反过来也行，但如果有还没 `episodeRef` 的爽点、集号又和位置对不上，`ids` 会拒绝补归属，免得新爽点挂到同号的旧集上。其他集的 id 不变，下游的引用都不会挂错；下游的集号显示缓存会被各自的 `ids` 门点名，按顺序运行 script 的 `renumber --outline`、storyboard 的 `renumber --script`、staging 的 `renumber --script` 刷新
+- **删掉一集**：直接从数组里删，运行 `renumber --write`；归属在被删那一集的爽点会被 `ids` 门点名，改归属或删掉这个爽点
+- `--seed <文本>` 让 `ids` 使用确定性随机源，同样的输入得到同样的 id。**只用于样例与自测**，真实项目不加
+- `C01`、`S01`、`P01`、`B01` 这些编号由模型在骨架里写定，写定后不重排——它们本来就是显式 id，下游直接引用

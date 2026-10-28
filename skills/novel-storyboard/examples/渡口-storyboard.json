@@ -3,16 +3,17 @@
   "aspectRatio": "16:9",
   "episodes": [
     {
+      "id": "ep_mtg51p27",
       "ep": 1,
       "segments": [
         {
-          "id": "E01-01",
-          "sceneIndex": 1,
+          "id": "sg_x96b305w",
+          "sceneRef": "sc_x3xq2c82",
           "cuts": [
             {
-              "beats": [
-                1,
-                1
+              "id": "ct_dfg1t316",
+              "beatIds": [
+                "bt_1kx49vx4"
               ],
               "seconds": 3,
               "size": "medium",
@@ -33,9 +34,9 @@
               "stability": "slight-shake"
             },
             {
-              "beats": [
-                2,
-                2
+              "id": "ct_3f06h4n5",
+              "beatIds": [
+                "bt_4ja0fjzn"
               ],
               "seconds": 3,
               "size": "extreme-wide",
@@ -55,9 +56,9 @@
               "sfx": "远处梆子声闷闷响两下"
             },
             {
-              "beats": [
-                3,
-                3
+              "id": "ct_bbedea3n",
+              "beatIds": [
+                "bt_64w7dn8y"
               ],
               "seconds": 4,
               "size": "wide",
@@ -76,9 +77,10 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                4,
-                5
+              "id": "ct_w7xc0nbs",
+              "beatIds": [
+                "bt_4zzm3d4p",
+                "bt_ptqckns6"
               ],
               "seconds": 5,
               "size": "wide",
@@ -103,13 +105,13 @@
           "music": "极慢速度的低音弦乐持续音，几乎贴着寂静"
         },
         {
-          "id": "E01-02",
-          "sceneIndex": 1,
+          "id": "sg_tbkve4z7",
+          "sceneRef": "sc_x3xq2c82",
           "cuts": [
             {
-              "beats": [
-                6,
-                6
+              "id": "ct_s8epvsfx",
+              "beatIds": [
+                "bt_ejg03e6t"
               ],
               "seconds": 3,
               "size": "medium",
@@ -130,9 +132,9 @@
               "sfx": "货筐落地，小铜铃轻响一声"
             },
             {
-              "beats": [
-                7,
-                7
+              "id": "ct_515wxq7y",
+              "beatIds": [
+                "bt_jyr48wx2"
               ],
               "seconds": 3,
               "size": "medium",
@@ -151,9 +153,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                8,
-                8
+              "id": "ct_7bm201cn",
+              "beatIds": [
+                "bt_j34cndtc"
               ],
               "seconds": 4,
               "size": "medium",
@@ -172,9 +174,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                9,
-                9
+              "id": "ct_tvha1eda",
+              "beatIds": [
+                "bt_a61jpe7x"
               ],
               "seconds": 4,
               "size": "close",
@@ -200,13 +202,13 @@
           "soundscape": "货筐落进船舱时吱嘎作响，小铜铃轻轻一响，木头闷声相碰，湿跳板上传来缓慢小心的脚步声"
         },
         {
-          "id": "E01-03",
-          "sceneIndex": 1,
+          "id": "sg_mj8k9r1z",
+          "sceneRef": "sc_x3xq2c82",
           "cuts": [
             {
-              "beats": [
-                10,
-                10
+              "id": "ct_03713k7y",
+              "beatIds": [
+                "bt_pbk0qjcm"
               ],
               "seconds": 4,
               "size": "medium",
@@ -228,9 +230,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                11,
-                11
+              "id": "ct_bp18wmzr",
+              "beatIds": [
+                "bt_7m1r2vhx"
               ],
               "seconds": 3,
               "size": "close",
@@ -251,9 +253,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                12,
-                12
+              "id": "ct_kd7a3en9",
+              "beatIds": [
+                "bt_kv41crgt"
               ],
               "seconds": 3,
               "size": "wide",
@@ -272,9 +274,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                13,
-                13
+              "id": "ct_shjj4gvc",
+              "beatIds": [
+                "bt_2qngh62g"
               ],
               "seconds": 2,
               "size": "wide",
@@ -299,13 +301,13 @@
           "music": "稀疏的低音弦乐慢速淡入，几拍后又淡出"
         },
         {
-          "id": "E01-04",
-          "sceneIndex": 2,
+          "id": "sg_z4zckktt",
+          "sceneRef": "sc_rvnqh21s",
           "cuts": [
             {
-              "beats": [
-                1,
-                1
+              "id": "ct_g65qf9wd",
+              "beatIds": [
+                "bt_8m5e0m48"
               ],
               "seconds": 3,
               "size": "wide",
@@ -325,9 +327,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                2,
-                2
+              "id": "ct_b01xaayh",
+              "beatIds": [
+                "bt_fmnn3tfa"
               ],
               "seconds": 5,
               "size": "medium",
@@ -346,9 +348,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                3,
-                3
+              "id": "ct_dqc68cp2",
+              "beatIds": [
+                "bt_tzxfwhbh"
               ],
               "seconds": 3,
               "size": "medium",
@@ -374,13 +376,13 @@
           "soundscape": "船身随水缓慢吱呀，船底下水流滑过，货担绳索窸窣，甲板上轻轻的脚步声后长凳一响"
         },
         {
-          "id": "E01-05",
-          "sceneIndex": 2,
+          "id": "sg_x10ankms",
+          "sceneRef": "sc_rvnqh21s",
           "cuts": [
             {
-              "beats": [
-                4,
-                4
+              "id": "ct_6d6mh1g0",
+              "beatIds": [
+                "bt_6y8jggjd"
               ],
               "seconds": 5,
               "size": "close",
@@ -399,9 +401,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                5,
-                5
+              "id": "ct_chv3h7p6",
+              "beatIds": [
+                "bt_axx5fzv3"
               ],
               "seconds": 3,
               "size": "close",
@@ -422,9 +424,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                6,
-                6
+              "id": "ct_dbkt0b4e",
+              "beatIds": [
+                "bt_4x9159y4"
               ],
               "seconds": 5,
               "size": "medium",
@@ -451,13 +453,13 @@
           "soundscape": "长凳被起身带得一刮，窄船舱里衣料窸窣，船身继续在流水上缓缓吱呀"
         },
         {
-          "id": "E01-06",
-          "sceneIndex": 2,
+          "id": "sg_24m9ht6t",
+          "sceneRef": "sc_rvnqh21s",
           "cuts": [
             {
-              "beats": [
-                7,
-                7
+              "id": "ct_czbysgzg",
+              "beatIds": [
+                "bt_m8kr6z76"
               ],
               "seconds": 2,
               "size": "close",
@@ -481,9 +483,9 @@
               "sfx": "手掌拍在皮面上的一声闷响"
             },
             {
-              "beats": [
-                8,
-                8
+              "id": "ct_0dvyvg1h",
+              "beatIds": [
+                "bt_jr5m1qh9"
               ],
               "seconds": 3,
               "size": "medium",
@@ -502,9 +504,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                9,
-                9
+              "id": "ct_8hnkz4d9",
+              "beatIds": [
+                "bt_trke6r7h"
               ],
               "seconds": 4,
               "size": "wide",
@@ -523,9 +525,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                10,
-                10
+              "id": "ct_1egjwr5b",
+              "beatIds": [
+                "bt_4azknjz8"
               ],
               "seconds": 3,
               "size": "medium",
@@ -549,13 +551,13 @@
           "soundscape": "手掌拍在皮面上的清脆一声划破船舱，随即一片寂静，船头竹篙一下下入水、滴水"
         },
         {
-          "id": "E01-07",
-          "sceneIndex": 2,
+          "id": "sg_yb0jrvad",
+          "sceneRef": "sc_rvnqh21s",
           "cuts": [
             {
-              "beats": [
-                11,
-                11
+              "id": "ct_821j9yrr",
+              "beatIds": [
+                "bt_hd4q060j"
               ],
               "seconds": 3,
               "size": "extreme-wide",
@@ -574,9 +576,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                12,
-                12
+              "id": "ct_zvbpy12x",
+              "beatIds": [
+                "bt_m2ah7jcc"
               ],
               "seconds": 4,
               "size": "medium",
@@ -595,9 +597,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                13,
-                13
+              "id": "ct_29p0zq6j",
+              "beatIds": [
+                "bt_mxk1f4pz"
               ],
               "seconds": 4,
               "size": "wide",
@@ -621,13 +623,13 @@
           "soundscape": "竹篙缓慢均匀地入水出水，雾里闷住的涟漪沿船身散开，货郎挪动身子时货担绳子吱的一声"
         },
         {
-          "id": "E01-08",
-          "sceneIndex": 2,
+          "id": "sg_jf249w57",
+          "sceneRef": "sc_rvnqh21s",
           "cuts": [
             {
-              "beats": [
-                14,
-                14
+              "id": "ct_hy6sh7k2",
+              "beatIds": [
+                "bt_stmz7ggk"
               ],
               "seconds": 4,
               "size": "medium",
@@ -647,9 +649,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                15,
-                15
+              "id": "ct_00dvxq0e",
+              "beatIds": [
+                "bt_mvc3k0wc"
               ],
               "seconds": 3,
               "size": "close",
@@ -668,9 +670,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                16,
-                16
+              "id": "ct_bc7972d0",
+              "beatIds": [
+                "bt_w9j9c16c"
               ],
               "seconds": 4,
               "size": "medium",
@@ -689,9 +691,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                17,
-                17
+              "id": "ct_0d3g6ahs",
+              "beatIds": [
+                "bt_bfj04m40"
               ],
               "seconds": 3,
               "size": "wide",
@@ -715,13 +717,13 @@
           "soundscape": "船身在缓慢的起伏里低低作响，耸肩时一声短促的出气，船头传来一声干笑，船底的水一下一下耐心地敲着"
         },
         {
-          "id": "E01-09",
-          "sceneIndex": 2,
+          "id": "sg_31zwaz33",
+          "sceneRef": "sc_rvnqh21s",
           "cuts": [
             {
-              "beats": [
-                18,
-                18
+              "id": "ct_q2hazeyf",
+              "beatIds": [
+                "bt_7y83v229"
               ],
               "seconds": 3,
               "size": "close",
@@ -741,9 +743,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                19,
-                19
+              "id": "ct_8tvb3693",
+              "beatIds": [
+                "bt_xm9abxds"
               ],
               "seconds": 3,
               "size": "close",
@@ -762,9 +764,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                20,
-                20
+              "id": "ct_qnmwtbsb",
+              "beatIds": [
+                "bt_ke47803c"
               ],
               "seconds": 3,
               "size": "wide",
@@ -792,13 +794,13 @@
           "music": "一个持续的低音大提琴长音，速度很慢，结束前淡出"
         },
         {
-          "id": "E01-10",
-          "sceneIndex": 2,
+          "id": "sg_sg7pnhra",
+          "sceneRef": "sc_rvnqh21s",
           "cuts": [
             {
-              "beats": [
-                21,
-                21
+              "id": "ct_xcv7z87a",
+              "beatIds": [
+                "bt_gaxbkbb0"
               ],
               "seconds": 5,
               "size": "extreme-close",
@@ -819,9 +821,9 @@
               "stability": "stable"
             },
             {
-              "beats": [
-                22,
-                22
+              "id": "ct_736h9f6v",
+              "beatIds": [
+                "bt_1ec4a5yn"
               ],
               "seconds": 3,
               "size": "extreme-close",

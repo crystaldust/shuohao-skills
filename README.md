@@ -62,12 +62,12 @@ flowchart TD
 
 | Skill | What it does |
 | --- | --- |
-| [**novel-outline**](skills/novel-outline/README.en.md) | Adapts a novel into a five-piece short-drama outline: adaptation notes, cast, beats, per-episode synopses, asset list (including a narrative-prop table). All 14 quality gates are script-checked; includes a checkup mode for existing outlines |
+| [**novel-outline**](skills/novel-outline/README.en.md) | Adapts a novel into a five-piece short-drama outline: adaptation notes, cast, beats, per-episode synopses, asset list (including a narrative-prop table). All 15 quality gates are script-checked; includes a checkup mode for existing outlines |
 | [**novel-characters**](skills/novel-characters/README.en.md) | Turns the cast the outline settled on into a character bible: profiles, design prompts, voice prompts, model sheets. Seeds the roster from outline.json; report language is configurable |
 | [**character-refs**](skills/character-refs/README.en.md) | **Actually generates** reference images for characters from any story (not just novels — your own original story works too): describe a character in one message; it is split into fields, gaps filled and confirmed, then a front full-body anchor is generated and every other view (headshot, 90° profile, back, details) references only that anchor, in on-demand tiers. Every image is labeled and individually regenerable, with staleness tracked. Works with Qwen Image (ComfyUI), codex image generation, the GPT Image 2 API, or a custom command |
 | [**novel-art**](skills/novel-art/README.en.md) | Art bibles for AI production (scenes + narrative props): consistency anchors, lighting & state variants, scale references, no-people/no-hands white plates. Seeds from outline.json; all 10 quality gates script-checked |
-| [**novel-script**](skills/novel-script/README.en.md) | Screenwriting for AI short drama: scenes + beat flow (action beats alternating with dialogue lines), per-episode duration deterministically estimated from reading speed, a gated cold-open hook in the first 3 beats, a per-character line book with voice prompts that feeds straight into TTS. All 10 quality gates script-checked |
-| [**novel-staging**](skills/novel-staging/README.en.md) | Plans opening positions from the screenplay and scene images: each character’s seat or standing position, facing direction, opening presence, and extras. Produces staging.json, an editable top-view report, and opening blocking sentences for the storyboard. All 8 quality gates script-checked |
+| [**novel-script**](skills/novel-script/README.en.md) | Screenwriting for AI short drama: scenes + beat flow (action beats alternating with dialogue lines), per-episode duration deterministically estimated from reading speed, a gated cold-open hook in the first 3 beats, a per-character line book with voice prompts that feeds straight into TTS. All 11 quality gates script-checked |
+| [**novel-staging**](skills/novel-staging/README.en.md) | Plans opening positions from the screenplay and scene images: each character’s seat or standing position, facing direction, opening presence, and extras. Produces staging.json, an editable top-view report, and opening blocking sentences for the storyboard. All 9 quality gates script-checked |
 | [**novel-storyboard**](skills/novel-storyboard/README.en.md) | Storyboarding for AI short drama: segments (one generation, ≤15s) → cuts (2–5s hard gate) → keyframes (master pinned at 0.00s, sub-frames at their cut marks), with MiniMax H3 prompt alignment and cut times audited verbatim; frames actually generated with the design sheets as references, plus one-command H3 / Seedance production packs. All 18 quality gates script-checked |
 
 **All six pipeline skills render their reports in English too** — reports default to a Chinese UI; pass `--lang en` to `render` for a fully English report (data content stays as authored). character-refs ships Chinese, English and Japanese UIs too, and translates on the spot for other languages.
@@ -83,7 +83,7 @@ flowchart TD
 | **`staging-report.html` (default)** | Interactive tool report with a draggable top view and live checks; export edits back to JSON |
 | `blocking` command output | One opening blocking sentence per scene, ready to copy into its first storyboard segment |
 
-An Agent reads the scene images and plans the staging; the bundled Node.js tools seed the data, check the eight gates, render reports, and generate the blocking sentences. The HTML tool report is the default user-facing result and opens locally in a browser. JSON is working data; Markdown is generated only on request. To try the completed sample from the repository root:
+An Agent reads the scene images and plans the staging; the bundled Node.js tools seed the data, check the nine gates, render reports, and generate the blocking sentences. The HTML tool report is the default user-facing result and opens locally in a browser. JSON is working data; Markdown is generated only on request. To try the completed sample from the repository root:
 
 ```bash
 node skills/novel-staging/scripts/novel-staging.mjs validate skills/novel-staging/examples/渡口-staging.json --script skills/novel-staging/references/test-fixtures/upstream/渡口-script.json --art skills/novel-staging/references/test-fixtures/upstream/渡口-art.json
@@ -109,7 +109,7 @@ Merging solves three problems, **all of them inside the assembler, none inside t
 
 - **Style bleed.** The five reports share 57 class names, 13 of which mean different things in different reports (`.copy`, `.kpis`, `.badge`, `.chip`…), so every selector gets a scope prefix
 - **Script bleed.** Each report's script does document-wide lookups like `document.querySelector('.expo')`. Merged, that only ever finds the first one — all five export buttons would break. Each script gets wrapped in a scoping proxy
-- **Asset paths.** Each report's images are relative to its own json directory (`images/…`, `E01-01/f1.png`) and get rebased against the output file
+- **Asset paths.** Each report's images are relative to its own json directory (`images/…`, `sg_x96b305w/ct_dfg1t316.png`) and get rebased against the output file
 
 One pane shows at a time by default (the five together run to roughly 600k characters). "Show all" in the bottom-left expands every pane so Cmd+F reaches the whole document. Number keys `1`–`5` switch panes, and `#pane-script` deep-links straight to one.
 
@@ -210,6 +210,8 @@ Run every self-test before adding a skill:
 
 ```bash
 for f in skills/*/scripts/selftest.mjs; do node "$f"; done
+node scripts/ids-sync-selftest.mjs        # the five copies of ids.mjs are byte-identical
+node scripts/fixtures-sync-selftest.mjs   # every upstream fixture matches the upstream example byte for byte
 ```
 
 There is no CI — the self-tests run in about a second, so running them locally beats waiting on a pipeline. **Only tested on macOS with Node 24**; there is no platform-specific code, so Linux and older Node releases should be fine, but that is unverified.

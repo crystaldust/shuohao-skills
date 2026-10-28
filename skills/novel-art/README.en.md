@@ -36,6 +36,8 @@ node scripts/novel-art.mjs validate art.json --cast cast.json
 node scripts/novel-art.mjs checkup art.json
 node scripts/novel-art.mjs render art.json --html             # Chinese report UI (default)
 node scripts/novel-art.mjs render art.json --html --lang en   # English report UI
+node scripts/novel-art.mjs render art.json --html --outline outline.json   # show episode numbers (usage stores episode IDs)
+node scripts/novel-art.mjs migrate old-art.json --outline outline.json --write   # migrate a 2.x art.json
 ```
 
 ## Sheet layout spec
@@ -56,6 +58,6 @@ Full spec in `references/sheet.md`.
 node scripts/selftest.mjs
 ```
 
-151 assertions — seeding, gate-defeating cases for all 10 gates, rendering (zh/en report UI), export. No model calls, runs in about a second.
+173 assertions — seeding, gate-defeating cases for all 10 gates, rendering (zh/en report UI), export. No model calls, runs in about a second.
 
 **Only tested on macOS + Node 24.**

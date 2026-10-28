@@ -31,7 +31,7 @@
 
 ```json
 {
-  "ep": 1, "scene": 2, "sceneId": "S01",
+  "ep": 1, "scene": 2, "sceneRef": "sc_8mw1tzqa", "sceneId": "S01",
   "cast": [{"id":"C01","name":"沈知微"}, {"id":"C04","name":"胡二爷"}],
   "places": [
     {"id":"C01","name":"沈知微","present":false,"item":null,"side":null,"along":null,"posture":null,"facing":null},

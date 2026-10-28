@@ -5,10 +5,14 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isId } from './ids.mjs';
 import {
+  migrateStaging,
+  renumberStaging,
   ITEM_RANGE,
   MIN_APART,
   blockingLines,
@@ -134,6 +138,16 @@ const ROUND = { name: '红木圆桌', alt: 'round table', plan: [0.3, 0.3, 0.7, 
   eq(d.locations.map((l) => l.sceneId), ['S02', 'S01', 'S03'], '地点按第一次出现的顺序');
   eq(d.locations[0].name, '渡口栈桥', '给了 art.json 地点带名字');
   eq(d.scenes.length, 9, '九场');
+  ok(d.scenes.every((s) => isId(s.sceneRef, 'sc')), '每场照抄剧本的场次 id');
+  eq(d.scenes[1].sceneRef, SCRIPT.episodes[0].scenes[1].id, 'sceneRef 指向剧本里对应的那一场');
+  eq(Object.keys(d.scenes[0]).slice(0, 3), ['ep', 'scene', 'sceneRef'], 'sceneRef 紧跟在显示编号后面');
+  {
+    const noIds = JSON.parse(JSON.stringify(SCRIPT));
+    delete noIds.episodes[0].scenes[0].id;
+    let msg = '';
+    try { seedFromScript(noIds); } catch (e) { msg = e.message; }
+    ok(msg.includes('ids --write'), '剧本缺场次 id 时 seed 拒绝，并提示先补 id');
+  }
   eq(d.scenes[1].cast.map((c) => c.name), ['沈知微', '陆行远', '老周', '胡二爷'], '给了 outline.json 人物带名字');
   ok(d.scenes.every((s) => s.places.length === s.cast.length && s.places.every((p) => p.present === null)), '每个出场人物一条，在不在场留给模型定');
   eq(d.scenes[0].lighting, '浓雾清晨', '剧本的光照时段搬过来');
@@ -149,7 +163,8 @@ const ROUND = { name: '红木圆桌', alt: 'round table', plan: [0.3, 0.3, 0.7, 
 {
   const opts = { script: SCRIPT, art: ART };
   const gates = gateReport(FIXTURE, opts);
-  eq(gates.length, 8, '八道门');
+  eq(gates.length, 9, '九道门');
+  eq(gates[0].id, 'ids', 'id 门排第一道');
   ok(gates.every((g) => g.ok), '自带样例全部通过（对着样例剧本和美术）');
   eq(validateStaging(FIXTURE, opts), [], '样例没有违规');
   ok(gate(FIXTURE, 'cast-complete').detail.includes('未提供 script.json'), '没给剧本：明说没跟剧本核对');
@@ -276,7 +291,7 @@ const ROUND = { name: '红木圆桌', alt: 'round table', plan: [0.3, 0.3, 0.7, 
   ok(html.includes('id="staging-data"') && html.includes('function stagingCore()'), '报告带着数据和同一份算法');
   ok(html.includes('class="card scene"') && html.includes('class="room"'), '每场一张能拖的平面');
   ok(html.includes('导出 JSON') && html.includes('还原到文件里的版本'), '导出和还原按钮');
-  ok(html.includes('✓ 质量门 8/8'), '页眉质量门徽章');
+  ok(html.includes('✓ 质量门 9/9'), '页眉质量门徽章');
   const d = clone();
   d.scenes[0].places[0].name = '</script><b>x';
   const bad = renderHtml(d);
@@ -318,6 +333,80 @@ const ROUND = { name: '红木圆桌', alt: 'round table', plan: [0.3, 0.3, 0.7, 
   ok(english.status === 0 && /<html lang="en">/.test(english.stdout), '默认 HTML 支持英文界面');
   const conflict = render('--html', '--md');
   ok(conflict.status !== 0 && conflict.stdout === '', '格式冲突时不输出混合产物');
+}
+
+/* ---------------- 稳定 id ---------------- */
+// 场次的身份是 sceneRef（剧本的场次 id）；ep / scene 是显示缓存，给了剧本就对照。
+
+{
+  const opts = { script: SCRIPT, art: ART };
+  ok(gate(FIXTURE, 'ids', opts).ok, '样例的 id 门通过');
+  ok(FIXTURE.scenes.every((s) => isId(s.sceneRef, 'sc')), '样例每场都有 sceneRef');
+  ok(gate(FIXTURE, 'ids').detail.includes('未提供 script.json'), '没给剧本：id 门明说只查了格式');
+
+  const a = clone(); delete a.scenes[2].sceneRef;
+  ok(!gate(a, 'ids').ok && gate(a, 'ids').detail.includes('第 2 集第 1 场 缺 sceneRef'), '缺 sceneRef 被拦并点名');
+  const b = clone(); b.scenes[0].sceneRef = 'S02';
+  ok(!gate(b, 'ids').ok && gate(b, 'ids').detail.includes('格式不对'), 'sceneRef 格式错被拦');
+  const c = clone(); c.scenes[1].sceneRef = c.scenes[0].sceneRef;
+  ok(!gate(c, 'ids').ok && gate(c, 'ids').detail.includes('重复'), '两场指向同一个剧本场次被拦');
+  const d = clone(); d.scenes[0].sceneRef = 'sc_zzzzzzzz';
+  ok(!gate(d, 'ids', opts).ok && gate(d, 'ids', opts).detail.includes('不在 script.json 里'), 'sceneRef 不在剧本里被拦');
+  ok(gate(d, 'cast-complete', opts).ok, '找不到的场次只在 id 门报一次，不在出场人物门重复报');
+  const e = clone(); e.scenes[1].scene = 3;
+  ok(!gate(e, 'ids', opts).ok && gate(e, 'ids', opts).detail.includes('剧本里是第 1 集第 2 场'), '显示编号与剧本不一致被拦');
+  const dupScript = JSON.parse(JSON.stringify(SCRIPT));
+  dupScript.episodes[1].scenes[0].id = dupScript.episodes[0].scenes[0].id;
+  ok(validateStaging(FIXTURE, { script: dupScript, art: ART }).some((x) => x.includes(`剧本里场次 id ${SCRIPT.episodes[0].scenes[0].id} 重复`)), '剧本场次 id 重复被点名');
+}
+{
+  // 剧本第 1 集开头插一场：站位按 id 仍对原来那一场，只是场号过期
+  const script = JSON.parse(JSON.stringify(SCRIPT));
+  const extra = JSON.parse(JSON.stringify(script.episodes[0].scenes[0]));
+  extra.id = 'sc_00000001';
+  extra.flow = extra.flow.map((x, i) => ({ ...x, id: `bt_${String(i).padStart(8, '0')}` }));
+  extra.characters = ['C05'];
+  script.episodes[0].scenes.unshift(extra);
+  const opts = { script, art: ART };
+  ok(gate(FIXTURE, 'cast-complete', opts).ok, '剧本插一场：出场人物仍按 id 对上原来那一场');
+  const g = gate(FIXTURE, 'ids', opts);
+  ok(!g.ok && g.detail.includes('剧本里是第 1 集第 2 场'), '剧本插一场：id 门点名场号过期');
+  // renumber 按 sceneRef 刷新显示编号
+  const before = JSON.stringify(FIXTURE);
+  const re = renumberStaging(FIXTURE, script);
+  eq(JSON.stringify(FIXTURE), before, 'renumberStaging 不改入参');
+  ok(re.scenes.filter((s) => s.ep === 1).every((s, i) => s.scene === FIXTURE.scenes.filter((x) => x.ep === 1)[i].scene + 1), '第 1 集各场场号后移一位');
+  ok(re.scenes.every((s, i) => s.sceneRef === FIXTURE.scenes[i].sceneRef), 'sceneRef 不动');
+  ok(gate(re, 'ids', opts).ok, 'renumber 后 id 门通过');
+  const orphan = clone(); orphan.scenes[0].sceneRef = 'sc_zzzzzzzz';
+  eq(renumberStaging(orphan, script).scenes[0].scene, orphan.scenes[0].scene, 'sceneRef 不在剧本里的场原样保留');
+}
+{
+  // 2.x 迁移：按 (ep, scene) 查到剧本场次，补上 sceneRef
+  const old = clone();
+  for (const s of old.scenes) delete s.sceneRef;
+  const before = JSON.stringify(old);
+  const m = migrateStaging(old, SCRIPT);
+  eq(JSON.stringify(old), before, 'migrateStaging 不改入参');
+  eq(JSON.stringify(m), JSON.stringify(FIXTURE), '迁移结果与 3.0 样例一致');
+  const bad = clone(); delete bad.scenes[0].sceneRef; bad.scenes[0].scene = 9;
+  let msg = '';
+  try { migrateStaging(bad, SCRIPT); } catch (err) { msg = err.message; }
+  ok(msg.includes('第 1 集第 9 场在剧本里找不到'), '找不到对应场次时点名');
+
+  const dir = mkdtempSync(join(tmpdir(), 'staging-ids-'));
+  const file = join(dir, 'staging.json');
+  writeFileSync(file, JSON.stringify(old, null, 2) + '\n');
+  const scriptPath = join(here, '..', 'references', 'test-fixtures', 'upstream', '渡口-script.json');
+  const run = (...args) => spawnSync(process.execPath, [join(here, 'novel-staging.mjs'), ...args], { encoding: 'utf8' });
+  eq(JSON.parse(run('migrate', file, '--script', scriptPath).stdout).scenes[0].sceneRef, FIXTURE.scenes[0].sceneRef, 'CLI migrate 打印迁移结果');
+  eq(run('migrate', file).status, 1, 'CLI migrate 缺 --script 报错');
+  eq(run('migrate', file, '--script', scriptPath, '--write').status, 0, 'CLI migrate --write 正常退出');
+  eq(readFileSync(file, 'utf8'), JSON.stringify(FIXTURE, null, 2) + '\n', '写回的文件与样例逐字节相同');
+  eq(run('renumber', file).status, 1, 'CLI renumber 缺 --script 报错');
+  eq(run('renumber', file, '--script', scriptPath, '--write').status, 0, 'CLI renumber --write 正常退出');
+  eq(readFileSync(file, 'utf8'), JSON.stringify(FIXTURE, null, 2) + '\n', '编号本来就对时 renumber 不改文件');
+  rmSync(dir, { recursive: true, force: true });
 }
 
 console.log(`✓ ${passed} 项自测全部通过`);

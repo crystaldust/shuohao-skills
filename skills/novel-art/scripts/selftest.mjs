@@ -4,10 +4,15 @@
 //   node scripts/selftest.mjs
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isId } from './ids.mjs';
 import {
+  migrateArt,
+  strayEpisodeIds,
   ANCHOR_RANGE,
   castNamesOf,
   gateReport,
@@ -76,12 +81,14 @@ eq(slug('a/b:c'), 'a-b-c', '危险字符替换');
 
 /* ---------------- seed ---------------- */
 
+const epOf = (id) => OUTLINE.episodes.find((e) => e.id === id)?.ep;
 const seeded = seedFromOutline(OUTLINE);
 eq(seeded.source, '渡口', 'seed 带书名');
 eq(seeded.scenes.length, 3, 'seed 搬全部场景');
 {
   const s01 = seeded.scenes.find((s) => s.id === 'S01');
-  eq(s01.usage.episodes.join(','), '1,2,3,4,5,6', 'seed 算出出现集');
+  ok(s01.usage.episodes.every((x) => isId(x, 'ep')), 'seed 的出现集记集 id，不记集号');
+  eq(s01.usage.episodes.map(epOf).join(','), '1,2,3,4,5,6', 'seed 算出出现集');
   eq(s01.usage.beats.join(','), '悬念钩,身份揭破,反转,收束', 'seed 算出承载爽点');
   eq(s01.summary, '', '设计字段留给模型填');
   const s03 = seeded.scenes.find((s) => s.id === 'S03');
@@ -97,7 +104,7 @@ eq(seeded.scenes.length, 3, 'seed 搬全部场景');
   // 两边指的是同一件事：这件物件在戏里干什么，不是材质描述
   eq(p01.summary, src.function, '大纲的 function 落成这里的 summary');
   const epsWithP01 = OUTLINE.episodes.filter((e) => (e.propIds ?? []).includes('P01')).map((e) => e.ep);
-  eq(p01.usage.episodes.join(','), epsWithP01.join(','), 'seed 算出道具的出现集');
+  eq(p01.usage.episodes.map(epOf).join(','), epsWithP01.join(','), 'seed 算出道具的出现集');
   // beatIds 是 id，art 这边要的是爽点类型，seed 负责翻译
   eq(p01.usage.beats.join(','), src.beatIds.map((id) => OUTLINE.beats.find((b) => b.id === id).type).join(','),
     'beatIds 翻译成爽点类型');
@@ -470,5 +477,69 @@ eq(FIXTURE.props.length, 2, '样例带两件叙事道具');
   const gateEn = renderHtml(FIXTURE, 'en');
   ok(gateEn.includes('Consistency anchors, 3–5'), 'EN 报告的质量门标签翻译且阈值原样保留');
   ok(!gateEn.includes('一致性锚点 3–5 个'), 'EN 报告不再出现中文门标签');
+}
+
+/* ---------------- 稳定 id ---------------- */
+// 出现集记集 id：大纲里插一集、集号整体后移，美术这边的记录不会悄悄指错集。
+
+ok([...FIXTURE.scenes, ...FIXTURE.props].every((x) => x.usage.episodes.every((id) => isId(id, 'ep'))), '样例的出现集都是集 id');
+{
+  const v2 = JSON.parse(JSON.stringify(OUTLINE));
+  delete v2.episodes[0].id;
+  let msg = '';
+  try { seedFromOutline(v2); } catch (e) { msg = e.message; }
+  ok(msg.includes('ids --write'), '大纲缺集 id 时 seed 拒绝，并提示先补 id');
+
+  const d = clone();
+  d.scenes[0].usage.episodes = [1];
+  ok(validateArt(d).some((x) => x.includes('usage.episodes 必须是集 id 数组')), '出现集写集号被拦');
+  const pd = clone();
+  pd.props[0].usage.episodes = [1];
+  ok(validateArt(pd).some((x) => x.includes(`[${pd.props[0].name}]`) &&x.includes('usage.episodes 必须是集 id 数组')), '道具的出现集写集号同样被拦');
+}
+{
+  const s01Line = (md) => md.split('\n').find((l) => l.startsWith('| S01 '));
+  ok(s01Line(renderMarkdown(FIXTURE, null, { outline: OUTLINE })).includes('1、2、3、4、5、6'), '给了大纲：出现集显示成集号');
+  ok(s01Line(renderMarkdown(FIXTURE)).includes('6 集'), '没给大纲：出现集显示集数');
+  ok(renderHtml(FIXTURE, null, { outline: OUTLINE }).includes('1、2、3、4、5、6'), 'HTML 给了大纲同样显示集号');
+  ok(renderMarkdown(FIXTURE, 'en').split('\n').find((l) => l.startsWith('| S01 ')).includes('6 eps'), '英文界面显示 eps');
+  const stray = clone();
+  stray.scenes[0].usage.episodes = [...stray.scenes[0].usage.episodes, 'ep_zzzzzzzz'];
+  ok(s01Line(renderMarkdown(stray, null, { outline: OUTLINE })).includes('?'), '大纲里找不到的集 id 显示成 ?');
+  eq(strayEpisodeIds(FIXTURE, OUTLINE).length, 0, '样例的出现集都在大纲里');
+  eq(strayEpisodeIds(stray, OUTLINE).join(','), 'S01 的 ep_zzzzzzzz', '大纲里没有的集 id 逐个点名');
+}
+{
+  // 2.x 美术稿：出现集是集号
+  const old = clone();
+  for (const x of [...old.scenes, ...old.props]) x.usage.episodes = x.usage.episodes.map(epOf);
+  const before = JSON.stringify(old);
+  const migrated = migrateArt(old, OUTLINE);
+  eq(JSON.stringify(old), before, 'migrateArt 不改入参');
+  eq(JSON.stringify(migrated), JSON.stringify(FIXTURE), '迁移结果与 3.0 样例一致');
+  old.scenes[0].usage.episodes.push(99);
+  let msg = '';
+  try { migrateArt(old, OUTLINE); } catch (e) { msg = e.message; }
+  ok(msg.includes('第 99 集'), '大纲里没有的集号迁移时点名报错');
+
+  const dir = mkdtempSync(join(tmpdir(), 'art-ids-'));
+  const oldFile = join(dir, 'art.json');
+  const outlineFile = join(here, '..', 'references', 'test-fixtures', 'upstream', '渡口-outline.json');
+  old.scenes[0].usage.episodes.pop();
+  writeFileSync(oldFile, JSON.stringify(old, null, 2) + '\n');
+  const SCRIPT = join(here, 'novel-art.mjs');
+  const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { encoding: 'utf8' });
+  eq(JSON.parse(run('migrate', oldFile, '--outline', outlineFile).stdout).scenes[0].usage.episodes[0], FIXTURE.scenes[0].usage.episodes[0], 'CLI migrate 打印迁移结果');
+  eq(run('migrate', oldFile).status, 1, 'CLI migrate 缺 --outline 报错');
+  eq(run('migrate', oldFile, '--outline', outlineFile, '--write').status, 0, 'CLI migrate --write 正常退出');
+  eq(readFileSync(oldFile, 'utf8'), JSON.stringify(FIXTURE, null, 2) + '\n', '写回的文件与样例逐字节相同');
+  const rendered = run('render', oldFile, '--outline', outlineFile);
+  ok(rendered.stdout.includes('1、2、3、4、5、6'), 'CLI render --outline 显示集号');
+  ok(!rendered.stderr.includes('不在大纲里'), '集 id 都在大纲里时不警告');
+  const strayDoc = JSON.parse(readFileSync(oldFile, 'utf8'));
+  strayDoc.scenes[0].usage.episodes.push('ep_zzzzzzzz');
+  writeFileSync(oldFile, JSON.stringify(strayDoc));
+  ok(run('render', oldFile, '--outline', outlineFile).stderr.includes('1 个集 id 不在大纲里'), 'CLI render 对大纲里没有的集 id 打警告');
+  rmSync(dir, { recursive: true, force: true });
 }
 console.log(`✓ ${passed} 项自测全部通过`);

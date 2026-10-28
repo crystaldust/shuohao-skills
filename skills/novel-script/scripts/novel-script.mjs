@@ -3,9 +3,10 @@
 // Zero dependencies on purpose: the skill must work in any directory
 // without an npm install. Node 18+ (stdlib only).
 
-import { readFileSync, realpathSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assignIds, collectIds, cryptoRng, duplicateIds, isId, seededRng } from './ids.mjs';
 
 /* ------------------------------------------------------------------ */
 /* 时长引擎                                                             */
@@ -122,6 +123,98 @@ const thText = (s) => typeof s === 'string' && s.trim();
 /** 动作描述必须是叙述体——台词只能进 dialogue 字段，混进 action 就没法计秒。 */
 const QUOTE_RE = /「|」|『|』|“|”/;
 
+/* ------------------------------------------------------------------ */
+/* 稳定 id                                                              */
+/* ------------------------------------------------------------------ */
+/*
+ * 集 id 照抄大纲（ep 只是显示用的集号，给了大纲就对照）；场次 sc_、节拍 bt_ 由 ids 分配。
+ * hookBeat 指向节拍 id：在一场里插一拍，钩子认领的仍是原来那一拍，全集第几拍现算。
+ */
+
+/** hookBeat 那一拍在这一集里的位置：{ scene, beat, pos }（都从 1 起），找不到为 null。 */
+export function hookPosition(ep) {
+  if (!isId(ep?.hookBeat, 'bt')) return null;
+  let pos = 0;
+  for (const [i, sc] of (ep.scenes ?? []).entries()) {
+    for (const [j, b] of (sc?.flow ?? []).entries()) {
+      pos += 1;
+      if (b?.id === ep.hookBeat) return { scene: i + 1, beat: j + 1, pos };
+    }
+  }
+  return null;
+}
+
+function scriptIdProblems(eps, outline) {
+  const bad = [];
+  const sceneIds = [];
+  const beatIds = [];
+  const epOf = outline ? new Map((outline.episodes ?? []).map((e) => [e?.id, e?.ep])) : null;
+  for (const ep of eps) {
+    const label = `第 ${ep?.ep} 集`;
+    if (ep?.id === undefined) bad.push(`${label}缺集 id（seed 时从大纲照抄；或 ids --outline 补上）`);
+    else if (!isId(ep.id, 'ep')) bad.push(`${label}的集 id「${ep.id}」格式不对`);
+    else if (epOf && !epOf.has(ep.id)) bad.push(`${label}的集 id 不在大纲里`);
+    else if (epOf && epOf.get(ep.id) !== ep.ep) bad.push(`${label}的集 id 在大纲里是第 ${epOf.get(ep.id)} 集`);
+    (ep?.scenes ?? []).forEach((sc, j) => {
+      const sLabel = `${label}第 ${j + 1} 场`;
+      if (sc?.id === undefined) bad.push(`${sLabel}缺 id（运行 ids --write）`);
+      else if (!isId(sc.id, 'sc')) bad.push(`${sLabel}的 id「${sc.id}」格式不对`);
+      else sceneIds.push(sc.id);
+      (sc?.flow ?? []).forEach((b, k) => {
+        if (b?.id === undefined) bad.push(`${sLabel}第 ${k + 1} 拍缺 id（运行 ids --write）`);
+        else if (!isId(b.id, 'bt')) bad.push(`${sLabel}第 ${k + 1} 拍的 id「${b.id}」格式不对`);
+        else beatIds.push(b.id);
+      });
+    });
+  }
+  for (const id of duplicateIds(eps.map((e) => e?.id).filter(Boolean))) bad.push(`集 id ${id} 重复`);
+  for (const id of duplicateIds(sceneIds)) bad.push(`场次 id ${id} 重复`);
+  for (const id of duplicateIds(beatIds)) bad.push(`节拍 id ${id} 重复`);
+  return bad;
+}
+
+/** 补 id：集 id 按集号从大纲照抄（不给大纲不补），场次、节拍只补缺的。已有的都不动，不改入参。 */
+export function assignScriptIds(doc, { outline = null, rng = cryptoRng } = {}) {
+  const idOf = new Map((outline?.episodes ?? []).filter((e) => isId(e?.id, 'ep')).map((e) => [e.ep, e.id]));
+  let taken = collectIds(doc);
+  const episodes = (doc?.episodes ?? []).map((ep) => {
+    const withId = ep?.id === undefined && idOf.has(ep?.ep) ? { id: idOf.get(ep.ep), ...ep } : ep;
+    const sc = assignIds(withId?.scenes ?? [], 'sc', taken, rng);
+    taken = sc.taken;
+    const scenes = sc.items.map((s) => {
+      const bt = assignIds(s?.flow ?? [], 'bt', taken, rng);
+      taken = bt.taken;
+      return Array.isArray(s?.flow) ? { ...s, flow: bt.items } : s;
+    });
+    return Array.isArray(withId?.scenes) ? { ...withId, scenes } : withId;
+  });
+  return { ...doc, episodes };
+}
+
+/** 2.x → 3.0：补 id，并把 hookBeat [场, 拍] 换成那一拍的节拍 id。集 id 只能来自大纲，所以必须给大纲。 */
+export function migrateScript(doc, outline, rng = cryptoRng) {
+  if (!outline) throw new Error('迁移剧本必须给 3.0 的大纲（--outline）：集 id 只能从大纲照抄');
+  const withIds = assignScriptIds(doc, { outline, rng });
+  const episodes = withIds.episodes.map((ep) => {
+    if (!Array.isArray(ep?.hookBeat)) return ep;
+    const [s, b] = ep.hookBeat;
+    const id = ep.scenes?.[s - 1]?.flow?.[b - 1]?.id;
+    if (!id) throw new Error(`第 ${ep.ep} 集的 hookBeat [${s}, ${b}] 指向不存在的节拍`);
+    return { ...ep, hookBeat: id };
+  });
+  return { ...withIds, episodes };
+}
+
+/**
+ * 集号是显示缓存：大纲插集、删集并 renumber 之后，按集 id 把每集的 ep 改成大纲里的集号。
+ * 只动编号，不碰 id；集 id 不在大纲里的集原样保留，由 ids 门点名。不改入参。
+ */
+export function renumberScript(doc, outline) {
+  const epOf = new Map((outline?.episodes ?? []).filter((e) => isId(e?.id, 'ep')).map((e) => [e.id, e.ep]));
+  const episodes = (doc?.episodes ?? []).map((ep) => (epOf.has(ep?.id) ? { ...ep, ep: epOf.get(ep.id) } : ep));
+  return { ...doc, episodes };
+}
+
 export function gateReport(doc, ctx = {}) {
   const gates = [];
   const add = (id, label, ok, detail = '') => gates.push({ id, label, ok, detail });
@@ -129,6 +222,7 @@ export function gateReport(doc, ctx = {}) {
   const params = paramsOf(doc);
   const stats = computeStats(doc);
   const bad = { duration: [], lineLen: [], speaker: [], hook: [], hookOpen: [], noAction: [], prose: [], beats: [], chars: [], scenes: [] };
+  const idBad = scriptIdProblems(eps, ctx.outline ?? null);
 
   for (const [i, ep] of eps.entries()) {
     const st = stats.episodes[i];
@@ -147,21 +241,16 @@ export function gateReport(doc, ctx = {}) {
 
     // 钩子不是标签是第一拍：hookBeat 认领具象落在哪一拍，必须在全集前几拍内。
     // 只有说明没有认领，就会出现「钩子说皮箱、开场拍了八拍雾」的衔接断裂
+    // hookBeat 指向节拍 id；全集第几拍按当前顺序现算
     {
       const hb = ep?.hookBeat;
-      if (!Array.isArray(hb) || hb.length !== 2 || !Number.isInteger(hb[0]) || !Number.isInteger(hb[1])) {
-        bad.hookOpen.push(`${label}缺 hookBeat（[场, 拍]，认领钩子具象的位置）`);
-      } else {
-        const scene = ep?.scenes?.[hb[0] - 1];
-        if (!scene || hb[1] < 1 || hb[1] > (scene.flow ?? []).length) {
-          bad.hookOpen.push(`${label}的 hookBeat [${hb[0]}, ${hb[1]}] 指向不存在的节拍`);
-        } else {
-          let pos = hb[1];
-          for (let i = 0; i < hb[0] - 1; i++) pos += (ep.scenes[i]?.flow ?? []).length;
-          if (pos > params.hookWindow) {
-            bad.hookOpen.push(`${label}的钩子落在全集第 ${pos} 拍，超出前 ${params.hookWindow} 拍——冷开场先给钩子的具象`);
-          }
-        }
+      const hp = hookPosition(ep);
+      if (!isId(hb, 'bt')) {
+        bad.hookOpen.push(`${label}缺 hookBeat（填这一集里兑现钩子那一拍的节拍 id）${Array.isArray(hb) ? '——3.0 起写节拍 id，不写 [场, 拍]；运行 migrate 转换' : ''}`);
+      } else if (!hp) {
+        bad.hookOpen.push(`${label}的 hookBeat 指向的节拍不在这一集里`);
+      } else if (hp.pos > params.hookWindow) {
+        bad.hookOpen.push(`${label}的钩子落在全集第 ${hp.pos} 拍，超出前 ${params.hookWindow} 拍——冷开场先给钩子的具象`);
       }
     }
 
@@ -199,8 +288,8 @@ export function gateReport(doc, ctx = {}) {
           if (!charIds.has(id)) bad.chars.push(`第 ${ep.ep} 集 ${sc.sceneId ?? '?'} 的 ${id}`);
         }
       }
-      // 爽点认领：大纲说这一集有的爆点，剧本必须认领
-      const due = [...new Set((outline.beats ?? []).filter((b) => b.episode === ep.ep).map((b) => b.type))];
+      // 爽点认领：大纲说这一集有的爆点，剧本必须认领。按集 id 对上，不按集号
+      const due = [...new Set((outline.beats ?? []).filter((b) => b.episodeRef === ep?.id).map((b) => b.type))];
       const claimed = new Set(ep?.beatsClaimed ?? []);
       for (const t of due) if (!claimed.has(t)) bad.beats.push(`第 ${ep.ep} 集缺「${t}」`);
     }
@@ -227,6 +316,7 @@ export function gateReport(doc, ctx = {}) {
   const SKIP_OUTLINE = '未提供 outline.json，本门跳过（视为通过）';
   const SKIP_ART = '未提供 art.json，本门跳过（视为通过）';
 
+  add('ids', 'id 齐全且一致（集 id、场次 id、节拍 id）', eps.length > 0 && idBad.length === 0, idBad.join('；'));
   add('duration', `每集时长在目标 ±${Math.round(params.tolerance * 100)}% 内`, eps.length > 0 && bad.duration.length === 0, bad.duration.join('；'));
   add('line-length', `单句台词 ≤ ${params.maxLineChars} 字`, bad.lineLen.length === 0, bad.lineLen.join('；'));
   add('speaker', '说话人在本场人物里，或明确标画外音 VO', bad.speaker.length === 0, bad.speaker.join('；'));
@@ -305,16 +395,18 @@ export function validateScript(doc, ctx = {}) {
  */
 
 export function seedFromOutline(outline, epRange = null) {
+  if (!(outline?.episodes ?? []).every((e) => isId(e?.id, 'ep'))) throw new Error('大纲还没有集 id：先运行 novel-outline 的 ids --write');
   const perEp = (outline?.params?.minutesPerEpisode ?? 3) * 60;
   const inRange = (n) => !epRange || (n >= epRange[0] && n <= epRange[1]);
   const episodes = (outline?.episodes ?? [])
     .filter((e) => inRange(e.ep))
     .map((e) => ({
+      id: e.id,
       ep: e.ep,
       targetSeconds: perEp,
       hook: e.hook ?? '',
       cliff: e.suspense ?? '',
-      beatsClaimed: [...new Set((outline.beats ?? []).filter((b) => b.episode === e.ep).map((b) => b.type))],
+      beatsClaimed: [...new Set((outline.beats ?? []).filter((b) => b.episodeRef === e.id).map((b) => b.type))],
       scenes: [],
       // 从大纲搬来的参考，写完删掉也行
       seedNote: `大纲梗概：${e.synopsis ?? ''}　候选场景：${(e.sceneIds ?? []).join('、')}　人物：${(e.characterIds ?? []).join('、')}`,
@@ -346,6 +438,7 @@ export function slug(name) {
  * 这里做展示层翻译——gateReport 的逻辑与中文诊断文案一行不动（CLI 仍是中文）。
  * 动态阈值由门自己算，映射里只写固定语义；未命中的 id 回落到原标签。 */
 const GATE_LABELS_EN = {
+  'ids': 'IDs complete and consistent (episode, scene and beat IDs)',
   'duration': 'Episode duration within ±{0}% of target',
   'line-length': 'Every line ≤ {0} characters',
   'speaker': 'Speaker is in the scene cast, or explicitly marked V.O.',
@@ -538,7 +631,7 @@ export function renderMarkdown(doc, ctx = {}) {
   for (const [i, ep] of eps.entries()) {
     const st = stats.episodes[i];
     out.push(`## ${t.epHead(ep.ep)}`, '');
-    out.push(`> ${t.estLabel(st.est, ep.targetSeconds)} · ${t.hookLabel}${t.colon}${ep.hook}${Array.isArray(ep.hookBeat) ? t.paren(t.hookAt(ep.hookBeat[0], ep.hookBeat[1])) : ''} · ${t.cliffLabel}${t.colon}${ep.cliff}`);
+    out.push(`> ${t.estLabel(st.est, ep.targetSeconds)} · ${t.hookLabel}${t.colon}${ep.hook}${hookPosition(ep) ? t.paren(t.hookAt(hookPosition(ep).scene, hookPosition(ep).beat)) : ''} · ${t.cliffLabel}${t.colon}${ep.cliff}`);
     if (ep.beatsClaimed.length) out.push(`> ${t.beatsLabel}${t.colon}${ep.beatsClaimed.join(t.sep)}`);
     out.push('');
     ep.scenes.forEach((sc, idx) => {
@@ -620,7 +713,7 @@ export function renderHtml(doc, ctx = {}) {
         .map((sc, idx) => {
           const flow = sc.flow
             .map((b, bi) => {
-              const hooked = Array.isArray(ep.hookBeat) && ep.hookBeat[0] === idx + 1 && ep.hookBeat[1] === bi + 1;
+              const hooked = b.id !== undefined && b.id === ep.hookBeat;
               const hk = hooked ? ' hooked' : '';
               return typeof b.action === 'string'
                 ? `<p class="act-line${hk}"${hooked ? ` title="${esc(t.hookLabel)}"` : ''}>${esc(b.action)}</p>`
@@ -645,7 +738,7 @@ export function renderHtml(doc, ctx = {}) {
     <span class="ep-est">${esc(t.estLabel(st.est, ep.targetSeconds))}</span>
     ${ep.beatsClaimed.map((b) => `<i class="bt">${esc(b)}</i>`).join('')}
   </header>
-  <div class="hk"><b>${esc(t.hookLabel)}</b><span>${esc(ep.hook)}${Array.isArray(ep.hookBeat) ? ` <i class="hookat">${esc(t.hookAt(ep.hookBeat[0], ep.hookBeat[1]))}</i>` : ''}</span></div>
+  <div class="hk"><b>${esc(t.hookLabel)}</b><span>${esc(ep.hook)}${hookPosition(ep) ? ` <i class="hookat">${esc(t.hookAt(hookPosition(ep).scene, hookPosition(ep).beat))}</i>` : ''}</span></div>
   <div class="scenes clip">
   ${scenesHtml}
   </div>
@@ -977,7 +1070,15 @@ const USAGE = `novel-script.mjs — novel-script skill 的确定性工具（剧�
          [--lang zh|en]                     报告界面语言（默认中文，或跟 script.json 的 lang 字段）
          [--outline o.json] [--art a.json]  给了上游就把 ID 显示成名字
          [--cast cast.json]                 台词本带每个角色的音色提示词（对接 TTS）
-  slug <name>                               剧名转安全文件名`;
+  ids <script.json> [--outline o.json]      给缺 id 的场次、节拍补 id；给了大纲还按集号照抄集 id
+      [--write] [--seed <文本>]             已有的不动；--seed 只用于样例与自测
+  renumber <script.json> --outline o.json   按集 id 把集号改成大纲里的集号（大纲插集、删集并 renumber 之后运行）
+           [--write]
+  migrate <2.x script.json>                 2.x 迁移到 3.0：补 id，hookBeat [场, 拍] 换成节拍 id
+          --outline <3.0 outline.json>      必须给（集 id 只能来自大纲）；选项同 ids
+  slug <name>                               剧名转安全文件名
+
+  ids / renumber / migrate 默认把结果打印到 stdout，加 --write 原地写回`;
 
 function readJson(path) {
   return JSON.parse(readFileSync(resolve(path), 'utf8'));
@@ -986,6 +1087,17 @@ function readJson(path) {
 function flag(rest, name, fallback = null) {
   const i = rest.indexOf(name);
   return i >= 0 && rest[i + 1] ? rest[i + 1] : fallback;
+}
+
+/** 与样例文件同一个格式写回（2 空格缩进 + 结尾换行），git diff 只显示真正的改动。 */
+function writeOrPrint(path, doc, write, note) {
+  const text = JSON.stringify(doc, null, 2) + '\n';
+  if (!write) {
+    process.stdout.write(text);
+    return;
+  }
+  writeFileSync(resolve(path), text, 'utf8');
+  console.error(note);
 }
 
 function loadCtx(rest) {
@@ -1054,6 +1166,30 @@ function main(argv) {
     const lang = flag(rest, '--lang');
     if (lang) ctx.lang = lang;
     process.stdout.write((rest.includes('--html') ? renderHtml(doc, ctx) : renderMarkdown(doc, ctx)) + '\n');
+    return;
+  }
+
+  if (cmd === 'ids' || cmd === 'migrate') {
+    const [path] = rest;
+    const outlinePath = flag(rest, '--outline');
+    if (!path || (cmd === 'migrate' && !outlinePath)) {
+      throw new Error(cmd === 'migrate' ? '用法：migrate <2.x script.json> --outline <3.0 outline.json> [--write] [--seed <文本>]' : '用法：ids <script.json> [--outline o.json] [--write] [--seed <文本>]');
+    }
+    const seed = flag(rest, '--seed');
+    const rng = seed ? seededRng(seed) : cryptoRng;
+    const outline = outlinePath ? readJson(outlinePath) : null;
+    const before = readJson(path);
+    const after = cmd === 'migrate' ? migrateScript(before, outline, rng) : assignScriptIds(before, { outline, rng });
+    const added = collectIds(after).size - collectIds(before).size;
+    writeOrPrint(path, after, rest.includes('--write'), `✓ 补了 ${added} 个 id`);
+    return;
+  }
+
+  if (cmd === 'renumber') {
+    const [path] = rest;
+    const outlinePath = flag(rest, '--outline');
+    if (!path || !outlinePath) throw new Error('用法：renumber <script.json> --outline <outline.json> [--write]');
+    writeOrPrint(path, renumberScript(readJson(path), readJson(outlinePath)), rest.includes('--write'), '✓ 已按大纲重写集号');
     return;
   }
 

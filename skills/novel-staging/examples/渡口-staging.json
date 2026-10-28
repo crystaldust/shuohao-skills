@@ -212,9 +212,9 @@
           "name": "芦苇浪线",
           "alt": "reed line",
           "plan": [
-            0.0,
+            0,
             0.04,
-            1.0,
+            1,
             0.16
           ],
           "on": false
@@ -245,9 +245,9 @@
           "name": "河面",
           "alt": "open river",
           "plan": [
-            0.0,
+            0,
             0.3,
-            1.0,
+            1,
             0.74
           ],
           "on": false
@@ -281,6 +281,7 @@
     {
       "ep": 1,
       "scene": 1,
+      "sceneRef": "sc_x3xq2c82",
       "sceneId": "S02",
       "lighting": "浓雾清晨",
       "cast": [
@@ -336,6 +337,7 @@
     {
       "ep": 1,
       "scene": 2,
+      "sceneRef": "sc_rvnqh21s",
       "sceneId": "S01",
       "lighting": "晨雾",
       "cast": [
@@ -405,6 +407,7 @@
     {
       "ep": 2,
       "scene": 1,
+      "sceneRef": "sc_cbnhb36y",
       "sceneId": "S01",
       "lighting": "晨雾",
       "cast": [
@@ -460,6 +463,7 @@
     {
       "ep": 3,
       "scene": 1,
+      "sceneRef": "sc_bmg7t4yn",
       "sceneId": "S01",
       "lighting": "晨雾",
       "cast": [
@@ -529,6 +533,7 @@
     {
       "ep": 4,
       "scene": 1,
+      "sceneRef": "sc_1bap85fv",
       "sceneId": "S01",
       "lighting": "晨雾",
       "cast": [
@@ -584,6 +589,7 @@
     {
       "ep": 5,
       "scene": 1,
+      "sceneRef": "sc_bngyese6",
       "sceneId": "S03",
       "lighting": "薄雾午前",
       "cast": [
@@ -625,6 +631,7 @@
     {
       "ep": 5,
       "scene": 2,
+      "sceneRef": "sc_m24jj7gr",
       "sceneId": "S01",
       "lighting": "晨雾",
       "cast": [
@@ -666,6 +673,7 @@
     {
       "ep": 6,
       "scene": 1,
+      "sceneRef": "sc_gg2pn4gq",
       "sceneId": "S01",
       "lighting": "雾散近岸",
       "cast": [
@@ -735,6 +743,7 @@
     {
       "ep": 6,
       "scene": 2,
+      "sceneRef": "sc_7n77hnfr",
       "sceneId": "S02",
       "cast": [
         {

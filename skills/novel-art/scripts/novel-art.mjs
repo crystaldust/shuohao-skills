@@ -3,9 +3,10 @@
 // Zero dependencies on purpose: the skill must work in any directory
 // without an npm install. Node 18+ (stdlib only).
 
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isId } from './ids.mjs';
 
 /* ------------------------------------------------------------------ */
 /* slug                                                                */
@@ -31,11 +32,13 @@ export function slug(name) {
 export function seedFromOutline(outline) {
   const eps = Array.isArray(outline?.episodes) ? outline.episodes : [];
   const beats = Array.isArray(outline?.beats) ? outline.beats : [];
+  // 出现集记集 id，不记集号：大纲里插一集、集号整体后移，这边的记录也不会指错集
+  if (!eps.every((e) => isId(e?.id, 'ep'))) throw new Error('大纲还没有集 id：先运行 novel-outline 的 ids --write');
 
   const scenes = (outline?.scenes ?? []).map((s) => {
-    const episodes = eps.filter((e) => (e?.sceneIds ?? []).includes(s.id)).map((e) => e.ep);
+    const episodes = eps.filter((e) => (e?.sceneIds ?? []).includes(s.id)).map((e) => e.id);
     const epSet = new Set(episodes);
-    const carried = [...new Set(beats.filter((b) => epSet.has(b.episode)).map((b) => b.type))];
+    const carried = [...new Set(beats.filter((b) => epSet.has(b.episodeRef)).map((b) => b.type))];
     return {
       id: s.id,
       name: s.name,
@@ -57,7 +60,7 @@ export function seedFromOutline(outline) {
   // 大纲没有 props 字段就返回空数组，模型照 prop-pass.md 从原文提取，跟以前一样。
   const beatType = new Map((outline?.beats ?? []).map((b) => [b?.id, b?.type]));
   const props = (outline?.props ?? []).map((pr) => {
-    const episodes = eps.filter((e) => (e?.propIds ?? []).includes(pr.id)).map((e) => e.ep);
+    const episodes = eps.filter((e) => (e?.propIds ?? []).includes(pr.id)).map((e) => e.id);
     return {
       id: pr.id,
       name: pr.name,
@@ -76,6 +79,25 @@ export function seedFromOutline(outline) {
   });
 
   return { source: outline?.source ?? '', scenes, props };
+}
+
+/** 2.x → 3.0：出现集从集号换成集 id（按迁移好的 3.0 大纲对照）。不改入参。 */
+export function migrateArt(art, outline) {
+  const idOf = new Map((outline?.episodes ?? []).filter((e) => isId(e?.id, 'ep')).map((e) => [e.ep, e.id]));
+  const toIds = (item) => {
+    if (!Array.isArray(item?.usage?.episodes)) return item;
+    const episodes = item.usage.episodes.map((x) => {
+      if (isId(x, 'ep')) return x;
+      if (!idOf.has(x)) throw new Error(`${item.id ?? '?'} 的第 ${x} 集在大纲里没有对应的集 id`);
+      return idOf.get(x);
+    });
+    return { ...item, usage: { ...item.usage, episodes } };
+  };
+  return {
+    ...art,
+    scenes: (art?.scenes ?? []).map(toIds),
+    ...(Array.isArray(art?.props) ? { props: art.props.map(toIds) } : {}),
+  };
 }
 
 /* ------------------------------------------------------------------ */
@@ -249,7 +271,7 @@ export function validateArt(doc, castNames = null) {
       if (!scenes.some((sc) => sc?.id === sid)) p(`[${label}] relatedScenes 里的 ${sid} 不存在`);
     }
     if (pr?.usage !== undefined) {
-      if (!Array.isArray(pr.usage?.episodes)) p(`[${label}] usage.episodes 必须是数组`);
+      if (!Array.isArray(pr.usage?.episodes) || !pr.usage.episodes.every((x) => isId(x, 'ep'))) p(`[${label}] usage.episodes 必须是集 id 数组`);
       if (!Array.isArray(pr.usage?.beats)) p(`[${label}] usage.beats 必须是数组`);
     }
   }
@@ -290,7 +312,7 @@ export function validateArt(doc, castNames = null) {
     }
 
     if (s?.usage !== undefined) {
-      if (!Array.isArray(s.usage?.episodes)) p(`[${label}] usage.episodes 必须是数组`);
+      if (!Array.isArray(s.usage?.episodes) || !s.usage.episodes.every((x) => isId(x, 'ep'))) p(`[${label}] usage.episodes 必须是集 id 数组`);
       if (!Array.isArray(s.usage?.beats)) p(`[${label}] usage.beats 必须是数组`);
     }
   }
@@ -402,6 +424,7 @@ const I18N = {
     sheetCaption: '主视角＋底部与右侧细节条',
     none: '—',
     listSep: '、',
+    epsCount: (n) => `${n} 集`,
     pairSep: '　',
     colon: '：',
     colophon: '设定与提示词由模型依据大纲/原文生成，质量门由脚本确定性检查。参考图一律无人——人是另一层资产；道具参考图另加无手、纯白背景。',
@@ -453,6 +476,7 @@ const I18N = {
     sheetCaption: 'Master view + bottom & right detail strips',
     none: '—',
     listSep: ', ',
+    epsCount: (n) => `${n} eps`,
     pairSep: ' · ',
     colon: ': ',
     colophon: 'Designs and prompts are model-generated from the outline/source text; quality gates are checked deterministically by the script. Reference images never contain people — characters are a separate asset layer; prop plates additionally ban hands and sit on a pure white background.',
@@ -478,7 +502,22 @@ const esc = (s) =>
 const mdRow = (cells) => `| ${cells.map((c) => String(c ?? '').replace(/\|/g, '\\|')).join(' | ')} |`;
 const mdHead = (cols) => [mdRow(cols), mdRow(cols.map(() => '---'))].join('\n');
 
-export function renderMarkdown(doc, lang = null) {
+/** 出现集记的是集 id：给了大纲就翻成集号显示，没给就只报集数——不猜集号。 */
+function episodesText(ids, ctx, t) {
+  if (!Array.isArray(ids) || !ids.length) return t.none;
+  if (!ctx?.outline) return t.epsCount(ids.length);
+  const epOf = new Map((ctx.outline.episodes ?? []).map((e) => [e?.id, e?.ep]));
+  return ids.map((id) => epOf.get(id) ?? '?').join(t.listSep);
+}
+
+/** 出现集里大纲没有的集 id（大纲删集、重建后遗留的旧 id）：报告里显示成 ?，render 时另外警告。 */
+export function strayEpisodeIds(doc, outline) {
+  const known = new Set((outline?.episodes ?? []).map((e) => e?.id));
+  return [...(doc?.scenes ?? []), ...(doc?.props ?? [])].flatMap((item) =>
+    (item?.usage?.episodes ?? []).filter((id) => !known.has(id)).map((id) => `${item.id} 的 ${id}`));
+}
+
+export function renderMarkdown(doc, lang = null, ctx = {}) {
   const t = tOf(lang ?? doc?.lang);
   const props = doc.props ?? [];
   const out = [`# ${t.docTitle(doc.source)}`, ''];
@@ -487,7 +526,7 @@ export function renderMarkdown(doc, lang = null) {
   for (const s of doc.scenes) {
     const type = s.variantOf ? `${t.variantScene} ← ${s.variantOf}` : s.primary ? t.primaryScene : t.onceScene;
     out.push(mdRow([
-      s.id, s.name, type, s.usage?.episodes?.join(t.listSep) ?? t.none,
+      s.id, s.name, type, episodesText(s.usage?.episodes, ctx, t),
       s.anchors.length, s.lighting.map((l) => l.state).join(t.listSep),
       s.changes ?? t.none,
     ]));
@@ -516,7 +555,7 @@ export function renderMarkdown(doc, lang = null) {
       out.push(mdRow([
         pr.id, pr.name, pr.scale, pr.states.map((st) => st.state).join(t.listSep),
         (pr.relatedScenes ?? []).join(t.listSep) || t.none,
-        pr.usage?.episodes?.join(t.listSep) ?? t.none, pr.anchors.length,
+        episodesText(pr.usage?.episodes, ctx, t), pr.anchors.length,
       ]));
     }
     out.push('');
@@ -550,7 +589,7 @@ function embedDoc(doc) {
   return JSON.stringify(doc).replace(/</g, '\\u003c');
 }
 
-export function renderHtml(doc, lang = null) {
+export function renderHtml(doc, lang = null, ctx = {}) {
   const code = lang ?? doc?.lang ?? 'zh';
   const t = tOf(code);
   const gates = gateReport(doc);
@@ -578,7 +617,7 @@ export function renderHtml(doc, lang = null) {
   const listRows = scenes.map((s) => [
     esc(s.id), esc(s.name),
     esc(s.variantOf ? `${t.variantScene} ← ${s.variantOf}` : s.primary ? t.primaryScene : t.onceScene),
-    esc(s.usage?.episodes?.join(t.listSep) ?? t.none),
+    esc(episodesText(s.usage?.episodes, ctx, t)),
     String(s.anchors.length),
     esc(s.lighting.map((l) => l.state).join(t.listSep)),
     esc(s.changes ?? t.none),
@@ -587,7 +626,7 @@ export function renderHtml(doc, lang = null) {
   const propListRows = props.map((pr) => [
     esc(pr.id), esc(pr.name), esc(pr.scale), esc(pr.states.map((st) => st.state).join(t.listSep)),
     esc((pr.relatedScenes ?? []).join(t.listSep) || t.none),
-    esc(pr.usage?.episodes?.join(t.listSep) ?? t.none), String(pr.anchors.length),
+    esc(episodesText(pr.usage?.episodes, ctx, t)), String(pr.anchors.length),
   ]);
 
   const propCards = props
@@ -605,7 +644,7 @@ export function renderHtml(doc, lang = null) {
     <span class="sc-id">${esc(pr.id)}</span>
     <h3>${esc(pr.name)}</h3>
     <span class="badge">${esc(pr.scale)}</span>
-    ${pr.usage?.episodes?.length ? `<span class="sc-use">${esc(t.usageTitle)} ${esc(pr.usage.episodes.join(t.listSep))}${pr.usage.beats?.length ? `${esc(t.pairSep)}${esc(t.beatsTitle)} ${esc(pr.usage.beats.join(' · '))}` : ''}</span>` : ''}
+    ${pr.usage?.episodes?.length ? `<span class="sc-use">${esc(t.usageTitle)} ${esc(episodesText(pr.usage.episodes, ctx, t))}${pr.usage.beats?.length ? `${esc(t.pairSep)}${esc(t.beatsTitle)} ${esc(pr.usage.beats.join(' · '))}` : ''}</span>` : ''}
   </header>
   <p class="sc-sum">${esc(pr.summary)}</p>
   ${plate}
@@ -643,7 +682,7 @@ export function renderHtml(doc, lang = null) {
     <span class="sc-id">${esc(s.id)}</span>
     <h3>${esc(s.name)}</h3>
     <span class="badge${s.primary ? '' : ' once'}">${esc(s.variantOf ? t.variantScene : s.primary ? t.primaryScene : t.onceScene)}</span>
-    ${s.usage?.episodes?.length ? `<span class="sc-use">${esc(t.usageTitle)} ${esc(s.usage.episodes.join(t.listSep))}${s.usage.beats?.length ? `${esc(t.pairSep)}${esc(t.beatsTitle)} ${esc(s.usage.beats.join(' · '))}` : ''}</span>` : ''}
+    ${s.usage?.episodes?.length ? `<span class="sc-use">${esc(t.usageTitle)} ${esc(episodesText(s.usage.episodes, ctx, t))}${s.usage.beats?.length ? `${esc(t.pairSep)}${esc(t.beatsTitle)} ${esc(s.usage.beats.join(' · '))}` : ''}</span>` : ''}
   </header>
   <p class="sc-sum">${esc(s.summary)}</p>
   ${plate}
@@ -943,6 +982,9 @@ const USAGE = `novel-art.mjs — novel-art skill 的确定性工具（场景 + �
         [--images <dir>]                 设定图所在目录，任意路径（相对当前目录解析）；
                                          默认 art.json 同级的 images/。找 <dir>/<slug>-sheet.png，
                                          找到就嵌进报告；图片路径按「报告写在 art.json 旁边」计算
+        [--outline <o.json>]             给了大纲，出现集显示成集号；不给只显示集数
+  migrate <2.x art.json> --outline <o>   2.x 迁移到 3.0：出现集从集号换成集 id（大纲要先迁移）
+        [--write]                        原地写回；不加就打印到 stdout
   slug <name>                            场景名转安全文件名`;
 
 function readJson(path) {
@@ -998,7 +1040,7 @@ function main(argv) {
 
   if (cmd === 'render') {
     const [path] = rest;
-    if (!path) throw new Error('用法：render <art.json> [--html|--md] [--lang zh|en] [--images <dir>]');
+    if (!path) throw new Error('用法：render <art.json> [--html|--md] [--lang zh|en] [--images <dir>] [--outline o.json]');
     const doc = readJson(path);
     const lang = flag(rest, '--lang');
     // 图是用户在下游出好的素材，放哪由用户定：--images 按普通命令行路径解析，
@@ -1011,7 +1053,25 @@ function main(argv) {
       const abs = join(imagesDir, `${slug(item.name)}-sheet.png`);
       if (existsSync(abs)) item.sheetImage = relative(outDir, abs).split(sep).join('/');
     }
-    process.stdout.write((rest.includes('--html') ? renderHtml(doc, lang) : renderMarkdown(doc, lang)) + '\n');
+    const outlinePath = flag(rest, '--outline');
+    const ctx = outlinePath ? { outline: readJson(outlinePath) } : {};
+    const stray = ctx.outline ? strayEpisodeIds(doc, ctx.outline) : [];
+    if (stray.length) console.error(`⚠️ 出现集里有 ${stray.length} 个集 id 不在大纲里，报告里显示成 ?：${stray.slice(0, 5).join('、')}${stray.length > 5 ? ' 等' : ''}`);
+    process.stdout.write((rest.includes('--html') ? renderHtml(doc, lang, ctx) : renderMarkdown(doc, lang, ctx)) + '\n');
+    return;
+  }
+
+  if (cmd === 'migrate') {
+    const [path] = rest;
+    const outlinePath = flag(rest, '--outline');
+    if (!path || !outlinePath) throw new Error('用法：migrate <2.x art.json> --outline <3.0 outline.json> [--write]');
+    const text = JSON.stringify(migrateArt(readJson(path), readJson(outlinePath)), null, 2) + '\n';
+    if (!rest.includes('--write')) {
+      process.stdout.write(text);
+      return;
+    }
+    writeFileSync(resolve(path), text, 'utf8');
+    console.error('✓ 出现集已换成集 id');
     return;
   }
 

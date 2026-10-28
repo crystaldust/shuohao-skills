@@ -17,10 +17,11 @@
 
 ![staging-report.html](assets/report.webp)
 
-## 质量门：8 道，全是代码
+## 质量门：9 道，全是代码
 
 | 门 | 规则 |
 | --- | --- |
+| **id 齐全一致** | 每场有 `sceneRef`（剧本场次 id），不重复；给了 script.json 还核对它在剧本里、集号场号没有过期 |
 | 认了图 | 每个地点 4–20 件东西 |
 | 东西的写法 | 名字不重复；平面位置是合法的框；按图认的必须有图上的框 |
 | 地点有着落 | 每一场的地点都有认图结果（给了 art.json 还核对地点编号） |
@@ -66,6 +67,8 @@ node scripts/novel-staging.mjs render staging.json > staging-report.html  # 默�
 node scripts/novel-staging.mjs render staging.json --lang en > staging-report.html # 英文界面报告
 node scripts/novel-staging.mjs render staging.json --md > staging.md # 按需导出文本版
 node scripts/novel-staging.mjs blocking staging.json                 # 每场的开场走位句
+node scripts/novel-staging.mjs migrate old.json --script script.json --write   # 2.x 迁移到 3.0：补上 sceneRef
+node scripts/novel-staging.mjs renumber staging.json --script script.json --write   # 剧本插场后按 sceneRef 刷新集号场号
 ```
 
 ## 文件
@@ -73,8 +76,8 @@ node scripts/novel-staging.mjs blocking staging.json                 # 每场的
 ```
 SKILL.md                 给 agent 读的工作流
 scripts/
-  novel-staging.mjs      seed / validate / checkup / blocking / render / slug
-  selftest.mjs           99 项断言，不调模型
+  novel-staging.mjs      seed / validate / checkup / blocking / render / migrate / renumber / slug
+  selftest.mjs           131 项断言，不调模型
 references/
   schema.md              staging.json 结构 + 坐标系
   read-pass.md           怎么从场景图里认东西（没有图时怎么推算）
@@ -93,6 +96,6 @@ assets/
 node scripts/selftest.mjs
 ```
 
-99 项断言，覆盖平面几何 / 拖动落点 / 走位句 / seed / 8 道门逐项击穿 / 渲染（中英界面、转义、嵌图），还会单独拿嵌进页面的那份算法的源码重建一份核对。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
+131 项断言，覆盖平面几何 / 拖动落点 / 走位句 / seed / 9 道门逐项击穿 / 渲染（中英界面、转义、嵌图），还会单独拿嵌进页面的那份算法的源码重建一份核对。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
 
 **只在 macOS + Node 24 上实测过。** 代码没有平台相关调用，Linux 和更低版本 Node 理论上没问题，但**没验过**。

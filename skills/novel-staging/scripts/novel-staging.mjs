@@ -3,9 +3,10 @@
 // Zero dependencies on purpose: the skill must work in any directory
 // without an npm install. Node 18+ (stdlib only).
 
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { duplicateIds, isId } from './ids.mjs';
 
 /* ------------------------------------------------------------------ */
 /* slug                                                                */
@@ -356,6 +357,9 @@ export function parseEps(spec) {
 }
 
 export function seedFromScript(script, { art = null, outline = null, eps = null } = {}) {
+  // 每场照抄剧本的场次 id：站位按 id 对账剧本，剧本里插一场也不会挂错
+  const allScenes = (script?.episodes ?? []).flatMap((e) => e?.scenes ?? []);
+  if (!allScenes.every((sc) => isId(sc?.id, 'sc'))) throw new Error('剧本还没有场次 id：先运行 novel-script 的 ids --write');
   const names = new Map((outline?.characters ?? []).map((c) => [c.id, c.name]));
   const artScenes = new Map((art?.scenes ?? []).map((s) => [s.id, s]));
   const scenes = [];
@@ -368,6 +372,7 @@ export function seedFromScript(script, { art = null, outline = null, eps = null 
       scenes.push({
         ep: ep.ep,
         scene: i + 1,
+        sceneRef: sc.id,
         sceneId: sc.sceneId ?? null,
         ...(sc.lighting ? { lighting: sc.lighting } : {}),
         cast,
@@ -420,6 +425,7 @@ export function locationProblems(loc) {
 }
 
 const GATES = [
+  { id: 'ids', label: '每一场都引用剧本场次 id，显示编号与剧本一致' },
   { id: 'items-read', label: `每个地点都认了图，${ITEM_RANGE[0]}–${ITEM_RANGE[1]} 件东西` },
   { id: 'item-shape', label: '东西的名字不重复，平面位置和图上位置都是合法的框' },
   { id: 'location-ref', label: '每一场的地点都有认图结果' },
@@ -431,6 +437,7 @@ const GATES = [
 ];
 
 const GATE_LABELS_EN = {
+  'ids': 'Every scene references a script scene ID; display numbers match the script',
   'items-read': `Every place read, ${ITEM_RANGE[0]}–${ITEM_RANGE[1]} things`,
   'item-shape': 'Thing names unique; plan and picture boxes well formed',
   'location-ref': 'Every scene’s place has been read',
@@ -441,6 +448,30 @@ const GATE_LABELS_EN = {
   'extras': 'Extras are a whole number, and where they are is said',
 };
 
+/** 剧本场次 id → 它在剧本里的显示编号与内容。站位一律按 id 查剧本，不按位置。 */
+function scriptSceneIndex(script) {
+  const out = new Map();
+  for (const ep of script?.episodes ?? []) {
+    (ep?.scenes ?? []).forEach((sc, j) => {
+      if (isId(sc?.id, 'sc')) out.set(sc.id, { ep: ep.ep, scene: j + 1, sc });
+    });
+  }
+  return out;
+}
+
+/** sceneRef 自身的问题（不需要剧本）：缺、格式不对、两场指向同一个剧本场次。 */
+function sceneRefProblems(scenes) {
+  const out = [];
+  for (const s of scenes) {
+    if (s?.sceneRef === undefined) out.push({ gate: 'ids', text: `${sceneLabel(s)} 缺 sceneRef（重新 seed，或运行 migrate --script）` });
+    else if (!isId(s.sceneRef, 'sc')) out.push({ gate: 'ids', text: `${sceneLabel(s)} 的 sceneRef「${s.sceneRef}」格式不对` });
+  }
+  for (const id of duplicateIds(scenes.map((s) => s?.sceneRef).filter((x) => isId(x, 'sc')))) {
+    out.push({ gate: 'ids', text: `剧本场次 ${id} 在站位表里出现了不止一次（重复）` });
+  }
+  return out;
+}
+
 /** 全部违规，每条带场次或地点。`script` 给了就核对出场人物跟剧本一致，`art` 给了就核对地点编号。 */
 export function stagingProblems(doc, { script = null, art = null } = {}) {
   const out = [];
@@ -448,6 +479,11 @@ export function stagingProblems(doc, { script = null, art = null } = {}) {
   const scenes = Array.isArray(doc?.scenes) ? doc.scenes : [];
   const byId = new Map(locations.map((l) => [l.sceneId, l]));
   for (const loc of locations) out.push(...locationProblems(loc));
+  out.push(...sceneRefProblems(scenes));
+  const byRef = script ? scriptSceneIndex(script) : null;
+  // 剧本里场次 id 重复时按 id 查会悄悄认到后一场：不指望上游一定先过了 script 的门
+  const scriptSceneIds = (script?.episodes ?? []).flatMap((e) => (e?.scenes ?? []).map((sc) => sc?.id)).filter(Boolean);
+  for (const id of duplicateIds(scriptSceneIds)) out.push({ gate: 'ids', text: `剧本里场次 id ${id} 重复（先过 novel-script 的 ids 门）` });
   if (art) {
     const known = new Set((art.scenes ?? []).map((s) => s.id));
     for (const loc of locations) if (!known.has(loc.sceneId)) out.push({ gate: 'location-ref', text: `地点 ${loc.sceneId} 不在 art.json 里` });
@@ -456,18 +492,50 @@ export function stagingProblems(doc, { script = null, art = null } = {}) {
     const label = sceneLabel(s);
     const loc = byId.get(s.sceneId);
     if (!loc) out.push({ gate: 'location-ref', text: `${label} 的地点 ${s.sceneId ?? '（空）'} 没有认图结果` });
-    if (script) {
-      const sc = (script.episodes ?? []).find((e) => e.ep === s.ep)?.scenes?.[s.scene - 1];
-      const want = sc?.characters ?? null;
+    if (byRef && isId(s.sceneRef, 'sc')) {
+      // 按 sceneRef 找剧本场次；ep / scene 只是显示缓存，跟剧本对不上就报过期
+      const hit = byRef.get(s.sceneRef);
+      const sc = hit?.sc ?? null;
+      const want = sc?.characters ?? [];
       const have = (s.cast ?? []).map((c) => c.id);
-      if (!sc) out.push({ gate: 'cast-complete', text: `${label} 在 script.json 里找不到` });
-      else if (want.length !== have.length || want.some((id) => !have.includes(id))) {
+      if (!hit) out.push({ gate: 'ids', text: `${label} 的 sceneRef 不在 script.json 里` });
+      else if (hit.ep !== s.ep || hit.scene !== s.scene) {
+        out.push({ gate: 'ids', text: `${label} 的编号过期：剧本里是第 ${hit.ep} 集第 ${hit.scene} 场（改 ep / scene，或重新 seed）` });
+      }
+      if (sc && (want.length !== have.length || want.some((id) => !have.includes(id)))) {
         out.push({ gate: 'cast-complete', text: `${label} 的出场人物跟剧本不一致：剧本 ${want.join('、')}，这里 ${have.join('、')}` });
       }
     }
     for (const p of sceneProblems(s, loc)) out.push({ gate: p.gate, text: `${label}：${p.text}` });
   }
   return out;
+}
+
+/**
+ * 2.x → 3.0：按 (ep, scene) 在 3.0 剧本里找到对应场次，补上 sceneRef（放在 scene 后面）。
+ * 2.x 的站位本来就按位置定位，这是 3.0 里唯一允许按位置查剧本的地方——一次性翻译成 id。不改入参。
+ */
+export function migrateStaging(doc, script) {
+  const scenes = (doc?.scenes ?? []).map((s) => {
+    if (s?.sceneRef !== undefined) return s;
+    const sc = (script?.episodes ?? []).find((e) => e?.ep === s?.ep)?.scenes?.[s?.scene - 1];
+    if (!isId(sc?.id, 'sc')) throw new Error(`第 ${s?.ep} 集第 ${s?.scene} 场在剧本里找不到（剧本要先迁移到 3.0）`);
+    return Object.fromEntries(Object.entries(s).flatMap(([k, v]) => (k === 'scene' ? [[k, v], ['sceneRef', sc.id]] : [[k, v]])));
+  });
+  return { ...doc, scenes };
+}
+
+/**
+ * ep / scene 是显示缓存：剧本插场、删场或集号变了以后，按 sceneRef 改成剧本里的集号场号。
+ * 只动编号，不碰 sceneRef；sceneRef 不在剧本里的场原样保留，由 ids 门点名。不改入参。
+ */
+export function renumberStaging(doc, script) {
+  const byRef = scriptSceneIndex(script);
+  const scenes = (doc?.scenes ?? []).map((s) => {
+    const hit = byRef.get(s?.sceneRef);
+    return hit ? { ...s, ep: hit.ep, scene: hit.scene } : s;
+  });
+  return { ...doc, scenes };
 }
 
 export function validateStaging(doc, opts = {}) {
@@ -479,12 +547,12 @@ export function gateReport(doc, opts = {}) {
   const problems = stagingProblems(doc, opts);
   return GATES.map((g) => {
     const mine = problems.filter((p) => p.gate === g.id);
-    const skipped = g.id === 'cast-complete' && !opts.script;
+    const skipped = (g.id === 'cast-complete' || g.id === 'ids') && !opts.script;
     return {
       id: g.id,
       label: g.label,
       ok: !mine.length,
-      detail: mine.length ? mine.slice(0, 3).map((p) => p.text).join('；') + (mine.length > 3 ? ` 等 ${mine.length} 处` : '') : skipped ? '未提供 script.json：只查站位表自己，没跟剧本核对' : '',
+      detail: mine.length ? mine.slice(0, 3).map((p) => p.text).join('；') + (mine.length > 3 ? ` 等 ${mine.length} 处` : '') : skipped ? (g.id === 'ids' ? '未提供 script.json：只查 sceneRef 的格式，没跟剧本核对' : '未提供 script.json：只查站位表自己，没跟剧本核对') : '',
     };
   });
 }
@@ -1195,6 +1263,11 @@ const USAGE = `novel-staging.mjs — novel-staging skill 的确定性工具（�
         [--lang zh|en]                   界面语言优先级：--lang > staging.json 顶层 lang 字段 > 中文
         [--images <dir>]                 场景图所在目录，默认 staging.json 同级的 images/；
                                          找 <dir>/<地点名>-sheet.png，找到就嵌进报告
+  migrate <2.x staging.json>             2.x 迁移到 3.0：按集号场号在剧本里找到场次，补上 sceneRef
+          --script <3.0 script.json>     必须给（剧本要先迁移）
+          [--write]                      原地写回；不加就打印到 stdout
+  renumber <staging.json>                按 sceneRef 把集号场号改成剧本里的编号（剧本插场、删场之后运行）
+           --script <script.json> [--write]
   slug <name>                            地点名转安全文件名`;
 
 function readJson(path) {
@@ -1204,6 +1277,17 @@ function readJson(path) {
 function flag(rest, name, fallback = null) {
   const i = rest.indexOf(name);
   return i >= 0 && rest[i + 1] ? rest[i + 1] : fallback;
+}
+
+/** 与样例文件同一个格式写回（2 空格缩进 + 结尾换行），git diff 只显示真正的改动。 */
+function writeOrPrint(path, doc, write, note) {
+  const text = JSON.stringify(doc, null, 2) + '\n';
+  if (!write) {
+    process.stdout.write(text);
+    return;
+  }
+  writeFileSync(resolve(path), text, 'utf8');
+  console.error(note);
 }
 
 function main(argv) {
@@ -1282,6 +1366,22 @@ function main(argv) {
       if (existsSync(abs)) images[loc.sceneId] = relative(outDir, abs).split(sep).join('/');
     }
     process.stdout.write((rest.includes('--md') ? renderMarkdown(doc, lang) : renderHtml(doc, lang, images)) + '\n');
+    return;
+  }
+
+  if (cmd === 'migrate') {
+    const [path] = rest;
+    const scriptPath = flag(rest, '--script');
+    if (!path || !scriptPath) throw new Error('用法：migrate <2.x staging.json> --script <3.0 script.json> [--write]');
+    writeOrPrint(path, migrateStaging(readJson(path), readJson(scriptPath)), rest.includes('--write'), '✓ 每场都补上了 sceneRef');
+    return;
+  }
+
+  if (cmd === 'renumber') {
+    const [path] = rest;
+    const scriptPath = flag(rest, '--script');
+    if (!path || !scriptPath) throw new Error('用法：renumber <staging.json> --script <script.json> [--write]');
+    writeOrPrint(path, renumberStaging(readJson(path), readJson(scriptPath)), rest.includes('--write'), '✓ 已按剧本重写集号场号');
     return;
   }
 

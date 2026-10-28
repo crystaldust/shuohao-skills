@@ -1,6 +1,6 @@
 ---
 name: novel-art
-version: 2.0.0
+version: 3.0.0
 description: |
   给 AI 短剧出美术设定集（场景 + 叙事道具）：场景的设计意图、一致性锚点、光照时段变体、
   空景提示词；道具的戏剧功能、状态变体、尺度参照、白底无手提示词。
@@ -72,7 +72,7 @@ metadata:
 node {baseDir}/scripts/novel-art.mjs seed <outline.json> > <workdir>/art.json
 ```
 
-确定性搬运：场景 id/名称/主场景标记/出现集/承载爽点，带复用方案的场景会有 `seedNote` 提示做成变体。**这些事实不要让模型重新想一遍。**
+确定性搬运：场景 id/名称/主场景标记/出现集/承载爽点，带复用方案的场景会有 `seedNote` 提示做成变体。**这些事实不要让模型重新想一遍。**出现集记的是集 id（`ep_…`），所以大纲必须已经补过 id——没补过 seed 会直接报错，先运行 novel-outline 的 `ids --write`。
 
 没有 outline.json 就自己按 `references/schema.md` 建清单。
 
@@ -102,9 +102,11 @@ node {baseDir}/scripts/novel-art.mjs validate <art.json> --cast <cast.json>
 
 ```bash
 cd <输出目录>
-node {baseDir}/scripts/novel-art.mjs render <剧名>-art.json --md   > <剧名>-art.md
-node {baseDir}/scripts/novel-art.mjs render <剧名>-art.json --html > art-report.html
+node {baseDir}/scripts/novel-art.mjs render <剧名>-art.json --md   --outline <outline.json> > <剧名>-art.md
+node {baseDir}/scripts/novel-art.mjs render <剧名>-art.json --html --outline <outline.json> > art-report.html
 ```
+
+`usage.episodes` 记的是集 id（来自 outline.json），不是集号：给了 `--outline` 报告才把它显示成集号，不给只显示集数。2.x 的 art.json 使用 `migrate <art.json> --outline <3.0 outline.json> --write` 一次性转过来（大纲要先使用 novel-outline 的 `migrate` 迁移）。`render --outline` 遇到大纲里没有的集 id 会打印警告，报告里显示成 `?`。
 
 报告界面默认中文；用户要英文界面就加 `--lang en`（或在 art.json 顶层写 `"lang": "en"`，`--lang` 优先）。`render` 默认去 art.json 同级的 `images/<slug>-sheet.png` 找图（场景和道具都找），图在别处就用 `--images <目录>` 指过去——**本 skill 不产生这些文件**，下游出完图重跑一次 render 就能嵌进报告。报告含：KPI 带、场景清单、场景设定卡、道具清单、道具设定卡（锚点核对表 / 状态变体 / 提示词包全带复制按钮）、质量门面板、导出 JSON（下载的就是 art.json 原样）。
 
@@ -148,7 +150,7 @@ seed 吃 outline.json 的场景与道具两块（大纲没有 `props` 时道具�
 node {baseDir}/scripts/selftest.mjs
 ```
 
-151 项断言，不调模型、不花额度。10 道质量门每一道都有击穿用例。改完脚本先跑这个。
+173 项断言，不调模型、不花额度。10 道质量门每一道都有击穿用例。改完脚本先跑这个。
 
 ## 自带样例
 
