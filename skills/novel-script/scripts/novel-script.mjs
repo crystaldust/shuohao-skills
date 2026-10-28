@@ -205,6 +205,16 @@ export function migrateScript(doc, outline, rng = cryptoRng) {
   return { ...withIds, episodes };
 }
 
+/**
+ * 集号是显示缓存：大纲插集、删集并 renumber 之后，按集 id 把每集的 ep 改成大纲里的集号。
+ * 只动编号，不碰 id；集 id 不在大纲里的集原样保留，由 ids 门点名。不改入参。
+ */
+export function renumberScript(doc, outline) {
+  const epOf = new Map((outline?.episodes ?? []).filter((e) => isId(e?.id, 'ep')).map((e) => [e.id, e.ep]));
+  const episodes = (doc?.episodes ?? []).map((ep) => (epOf.has(ep?.id) ? { ...ep, ep: epOf.get(ep.id) } : ep));
+  return { ...doc, episodes };
+}
+
 export function gateReport(doc, ctx = {}) {
   const gates = [];
   const add = (id, label, ok, detail = '') => gates.push({ id, label, ok, detail });
@@ -1062,11 +1072,13 @@ const USAGE = `novel-script.mjs — novel-script skill 的确定性工具（剧�
          [--cast cast.json]                 台词本带每个角色的音色提示词（对接 TTS）
   ids <script.json> [--outline o.json]      给缺 id 的场次、节拍补 id；给了大纲还按集号照抄集 id
       [--write] [--seed <文本>]             已有的不动；--seed 只用于样例与自测
+  renumber <script.json> --outline o.json   按集 id 把集号改成大纲里的集号（大纲插集、删集并 renumber 之后运行）
+           [--write]
   migrate <2.x script.json>                 2.x 迁移到 3.0：补 id，hookBeat [场, 拍] 换成节拍 id
           --outline <3.0 outline.json>      必须给（集 id 只能来自大纲）；选项同 ids
   slug <name>                               剧名转安全文件名
 
-  ids / migrate 默认把结果打印到 stdout，加 --write 原地写回`;
+  ids / renumber / migrate 默认把结果打印到 stdout，加 --write 原地写回`;
 
 function readJson(path) {
   return JSON.parse(readFileSync(resolve(path), 'utf8'));
@@ -1170,6 +1182,14 @@ function main(argv) {
     const after = cmd === 'migrate' ? migrateScript(before, outline, rng) : assignScriptIds(before, { outline, rng });
     const added = collectIds(after).size - collectIds(before).size;
     writeOrPrint(path, after, rest.includes('--write'), `✓ 补了 ${added} 个 id`);
+    return;
+  }
+
+  if (cmd === 'renumber') {
+    const [path] = rest;
+    const outlinePath = flag(rest, '--outline');
+    if (!path || !outlinePath) throw new Error('用法：renumber <script.json> --outline <outline.json> [--write]');
+    writeOrPrint(path, renumberScript(readJson(path), readJson(outlinePath)), rest.includes('--write'), '✓ 已按大纲重写集号');
     return;
   }
 

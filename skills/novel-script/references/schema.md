@@ -76,6 +76,7 @@
 - 集 `id` 照抄大纲；场次 `sc_…`、节拍 `bt_…`（每一拍都有，放在 `action` / `speaker` 前面）由 `ids --write` 分配，**写戏时不写 id**，已有的永远不改
 - **插一拍、插一场**：直接插进数组（不写 id），再运行 `ids --write`，只会给新的补 id。`hookBeat` 仍指向原来那一拍，全集第几拍跟着变——如果被挤出冷开场窗口，门会报出来；站位、分镜按 id 对账，不会挂错
 - `migrate <2.x script.json> --outline <3.0 outline.json>`：补 id，并把 `hookBeat [场, 拍]` 换成节拍 id
+- **大纲插集、删集之后**：`ep` 是显示缓存，`ids` 门会点名过期的集号；运行 `renumber <script.json> --outline <outline.json> --write`，按集 id 改成大纲里的集号，只动编号，不碰 id
 - `--seed <文本>` 让 id 可复现，**只用于样例与自测**
 
 ## ID 纪律

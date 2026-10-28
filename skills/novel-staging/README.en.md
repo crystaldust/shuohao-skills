@@ -17,10 +17,11 @@ Opening staging for every scene of an AI short drama: when the scene opens, whic
 
 ![staging-report.html with English UI](assets/report-en.jpg)
 
-## Quality gates: 8, all code
+## Quality gates: 9, all code
 
 | Gate | Rule |
 | --- | --- |
+| **IDs complete and consistent** | Every scene has a `sceneRef` (script scene ID), none repeated; with script.json, it exists there and the episode/scene numbers are not stale |
 | Picture read | 4–20 things per place |
 | Things well formed | Unique names; valid top-view boxes; picture boxes when read off a picture |
 | Places resolved | Every scene's place has been read (checked against art.json when given) |
@@ -63,6 +64,7 @@ node scripts/novel-staging.mjs seed script.json --art art.json --outline outline
 node scripts/novel-staging.mjs validate staging.json --script script.json --art art.json
 node scripts/novel-staging.mjs checkup staging.json                 # gates only
 node scripts/novel-staging.mjs migrate old.json --script script.json --write   # migrate a 2.x staging.json (adds sceneRef)
+node scripts/novel-staging.mjs renumber staging.json --script script.json --write  # refresh episode / scene numbers from sceneRef after the script changes
 node scripts/novel-staging.mjs render staging.json > staging-report.html  # HTML by default
 node scripts/novel-staging.mjs render staging.json --lang en > staging-report.html # English UI
 node scripts/novel-staging.mjs render staging.json --md > staging.md # optional text export
@@ -75,6 +77,6 @@ node scripts/novel-staging.mjs blocking staging.json --lang en       # each scen
 node scripts/selftest.mjs
 ```
 
-122 assertions: top-view geometry, landing spots, sentences, seed, each of the 9 gates broken one by one, rendering (both UIs, escaping, pictures), and a rebuild of the embedded code from its own source to check it matches the command line. No model calls, under a second.
+131 assertions: top-view geometry, landing spots, sentences, seed, each of the 9 gates broken one by one, rendering (both UIs, escaping, pictures), and a rebuild of the embedded code from its own source to check it matches the command line. No model calls, under a second.
 
 **Tested on macOS + Node 24 only.** Nothing platform-specific in the code, but Linux and older Node are **not verified**.

@@ -481,6 +481,9 @@ export function stagingProblems(doc, { script = null, art = null } = {}) {
   for (const loc of locations) out.push(...locationProblems(loc));
   out.push(...sceneRefProblems(scenes));
   const byRef = script ? scriptSceneIndex(script) : null;
+  // 剧本里场次 id 重复时按 id 查会悄悄认到后一场：不指望上游一定先过了 script 的门
+  const scriptSceneIds = (script?.episodes ?? []).flatMap((e) => (e?.scenes ?? []).map((sc) => sc?.id)).filter(Boolean);
+  for (const id of duplicateIds(scriptSceneIds)) out.push({ gate: 'ids', text: `剧本里场次 id ${id} 重复（先过 novel-script 的 ids 门）` });
   if (art) {
     const known = new Set((art.scenes ?? []).map((s) => s.id));
     for (const loc of locations) if (!known.has(loc.sceneId)) out.push({ gate: 'location-ref', text: `地点 ${loc.sceneId} 不在 art.json 里` });
@@ -518,6 +521,19 @@ export function migrateStaging(doc, script) {
     const sc = (script?.episodes ?? []).find((e) => e?.ep === s?.ep)?.scenes?.[s?.scene - 1];
     if (!isId(sc?.id, 'sc')) throw new Error(`第 ${s?.ep} 集第 ${s?.scene} 场在剧本里找不到（剧本要先迁移到 3.0）`);
     return Object.fromEntries(Object.entries(s).flatMap(([k, v]) => (k === 'scene' ? [[k, v], ['sceneRef', sc.id]] : [[k, v]])));
+  });
+  return { ...doc, scenes };
+}
+
+/**
+ * ep / scene 是显示缓存：剧本插场、删场或集号变了以后，按 sceneRef 改成剧本里的集号场号。
+ * 只动编号，不碰 sceneRef；sceneRef 不在剧本里的场原样保留，由 ids 门点名。不改入参。
+ */
+export function renumberStaging(doc, script) {
+  const byRef = scriptSceneIndex(script);
+  const scenes = (doc?.scenes ?? []).map((s) => {
+    const hit = byRef.get(s?.sceneRef);
+    return hit ? { ...s, ep: hit.ep, scene: hit.scene } : s;
   });
   return { ...doc, scenes };
 }
@@ -1250,6 +1266,8 @@ const USAGE = `novel-staging.mjs — novel-staging skill 的确定性工具（�
   migrate <2.x staging.json>             2.x 迁移到 3.0：按集号场号在剧本里找到场次，补上 sceneRef
           --script <3.0 script.json>     必须给（剧本要先迁移）
           [--write]                      原地写回；不加就打印到 stdout
+  renumber <staging.json>                按 sceneRef 把集号场号改成剧本里的编号（剧本插场、删场之后运行）
+           --script <script.json> [--write]
   slug <name>                            地点名转安全文件名`;
 
 function readJson(path) {
@@ -1356,6 +1374,14 @@ function main(argv) {
     const scriptPath = flag(rest, '--script');
     if (!path || !scriptPath) throw new Error('用法：migrate <2.x staging.json> --script <3.0 script.json> [--write]');
     writeOrPrint(path, migrateStaging(readJson(path), readJson(scriptPath)), rest.includes('--write'), '✓ 每场都补上了 sceneRef');
+    return;
+  }
+
+  if (cmd === 'renumber') {
+    const [path] = rest;
+    const scriptPath = flag(rest, '--script');
+    if (!path || !scriptPath) throw new Error('用法：renumber <staging.json> --script <script.json> [--write]');
+    writeOrPrint(path, renumberStaging(readJson(path), readJson(scriptPath)), rest.includes('--write'), '✓ 已按剧本重写集号场号');
     return;
   }
 

@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { isId } from './ids.mjs';
 import {
   migrateStaging,
+  renumberStaging,
   ITEM_RANGE,
   MIN_APART,
   blockingLines,
@@ -354,6 +355,9 @@ const ROUND = { name: '红木圆桌', alt: 'round table', plan: [0.3, 0.3, 0.7, 
   ok(gate(d, 'cast-complete', opts).ok, '找不到的场次只在 id 门报一次，不在出场人物门重复报');
   const e = clone(); e.scenes[1].scene = 3;
   ok(!gate(e, 'ids', opts).ok && gate(e, 'ids', opts).detail.includes('剧本里是第 1 集第 2 场'), '显示编号与剧本不一致被拦');
+  const dupScript = JSON.parse(JSON.stringify(SCRIPT));
+  dupScript.episodes[1].scenes[0].id = dupScript.episodes[0].scenes[0].id;
+  ok(validateStaging(FIXTURE, { script: dupScript, art: ART }).some((x) => x.includes(`剧本里场次 id ${SCRIPT.episodes[0].scenes[0].id} 重复`)), '剧本场次 id 重复被点名');
 }
 {
   // 剧本第 1 集开头插一场：站位按 id 仍对原来那一场，只是场号过期
@@ -367,6 +371,15 @@ const ROUND = { name: '红木圆桌', alt: 'round table', plan: [0.3, 0.3, 0.7, 
   ok(gate(FIXTURE, 'cast-complete', opts).ok, '剧本插一场：出场人物仍按 id 对上原来那一场');
   const g = gate(FIXTURE, 'ids', opts);
   ok(!g.ok && g.detail.includes('剧本里是第 1 集第 2 场'), '剧本插一场：id 门点名场号过期');
+  // renumber 按 sceneRef 刷新显示编号
+  const before = JSON.stringify(FIXTURE);
+  const re = renumberStaging(FIXTURE, script);
+  eq(JSON.stringify(FIXTURE), before, 'renumberStaging 不改入参');
+  ok(re.scenes.filter((s) => s.ep === 1).every((s, i) => s.scene === FIXTURE.scenes.filter((x) => x.ep === 1)[i].scene + 1), '第 1 集各场场号后移一位');
+  ok(re.scenes.every((s, i) => s.sceneRef === FIXTURE.scenes[i].sceneRef), 'sceneRef 不动');
+  ok(gate(re, 'ids', opts).ok, 'renumber 后 id 门通过');
+  const orphan = clone(); orphan.scenes[0].sceneRef = 'sc_zzzzzzzz';
+  eq(renumberStaging(orphan, script).scenes[0].scene, orphan.scenes[0].scene, 'sceneRef 不在剧本里的场原样保留');
 }
 {
   // 2.x 迁移：按 (ep, scene) 查到剧本场次，补上 sceneRef
@@ -390,6 +403,9 @@ const ROUND = { name: '红木圆桌', alt: 'round table', plan: [0.3, 0.3, 0.7, 
   eq(run('migrate', file).status, 1, 'CLI migrate 缺 --script 报错');
   eq(run('migrate', file, '--script', scriptPath, '--write').status, 0, 'CLI migrate --write 正常退出');
   eq(readFileSync(file, 'utf8'), JSON.stringify(FIXTURE, null, 2) + '\n', '写回的文件与样例逐字节相同');
+  eq(run('renumber', file).status, 1, 'CLI renumber 缺 --script 报错');
+  eq(run('renumber', file, '--script', scriptPath, '--write').status, 0, 'CLI renumber --write 正常退出');
+  eq(readFileSync(file, 'utf8'), JSON.stringify(FIXTURE, null, 2) + '\n', '编号本来就对时 renumber 不改文件');
   rmSync(dir, { recursive: true, force: true });
 }
 

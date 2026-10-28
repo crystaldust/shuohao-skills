@@ -389,7 +389,22 @@ function storyboardIdProblems(eps, expanded) {
   }
   for (const id of duplicateIds(segIds)) bad.push(`段 id ${id} 重复`);
   for (const id of duplicateIds(cutIds)) bad.push(`切 id ${id} 重复`);
+  // 剧本里 id 重复时按 id 查找会悄悄认到后一个：不指望上游一定先过了 script 的门
+  if (expanded) {
+    const scenes = [...expanded.values()].flatMap((e) => e.scenes);
+    for (const id of duplicateIds(scenes.map((s) => s.id).filter(Boolean))) bad.push(`剧本里场次 id ${id} 重复（先过 novel-script 的 ids 门）`);
+    for (const id of duplicateIds(scenes.flatMap((s) => s.beats.map((b) => b.id)).filter(Boolean))) bad.push(`剧本里节拍 id ${id} 重复（先过 novel-script 的 ids 门）`);
+  }
   return bad;
+}
+
+/**
+ * 导出前的 id 检查：段 id、切 id 直接拼进文件路径，id 来自模型写的 JSON，
+ * 不过 ids 门就不许落盘（否则「../x」这类 id 能把文件写到 --out 外面）。
+ */
+export function assertExportIds(board, expanded) {
+  const bad = storyboardIdProblems(board?.episodes ?? [], expanded);
+  if (bad.length) throw new Error(`导出前 id 要先过 ids 门：${bad.slice(0, 5).join('；')}${bad.length > 5 ? ` 等 ${bad.length} 处` : ''}`);
 }
 
 /** 补 id：集 id 按集号从剧本照抄（不给剧本不补），段、切只补缺的。已有的都不动，不改入参。 */
@@ -431,19 +446,31 @@ function migrateSegment(seg, sEp, sid) {
 /**
  * 2.x → 3.0：sceneIndex → sceneRef，beats [起, 止] → 逐拍的 beatIds，再补集、段、切 id。
  * 已经是 3.0 写法的段原样保留，重复运行不会出错。3.0 里只有迁移允许按位置查找；
- * 场次与节拍 id 只能来自剧本，所以必须给剧本。
+ * 场次与节拍 id 只能来自剧本，所以必须给剧本。切到一半的草稿还留着 seedScenes 底稿，
+ * 底稿按 3.0 剧本重新生成（2.x 底稿里是场号和按位置的节拍号）。
  */
 export function migrateStoryboard(doc, script, rng = cryptoRng) {
   if (!script) throw new Error('迁移分镜必须给 3.0 的剧本（--script）：场次与节拍 id 只能从剧本照抄');
   if (!scriptHasIds(script)) throw new Error(NO_SCRIPT_IDS);
+  const seeded = new Map(seedFromScript(script).episodes.map((e) => [e.id, e.seedScenes]));
   const episodes = (doc?.episodes ?? []).map((ep) => {
     const sEp = (script.episodes ?? []).find((e) => e.ep === ep?.ep);
     if (!sEp) throw new Error(`第 ${ep?.ep} 集在剧本里找不到`);
     const segments = (ep.segments ?? []).map((seg, i) =>
       seg?.sceneIndex === undefined ? seg : migrateSegment(seg, sEp, segLabel(ep.ep, i)));
-    return { ...ep, segments };
+    return { ...ep, segments, ...(ep.seedScenes ? { seedScenes: seeded.get(sEp.id) } : {}) };
   });
   return assignStoryboardIds({ ...doc, episodes }, { script, rng });
+}
+
+/**
+ * 集号是显示缓存：剧本的集号变了以后（大纲插集、删集），按集 id 把每集的 ep 改成剧本里的集号。
+ * 只动编号，不碰 id；E01-02 这类标签都按集号现算，跟着变。集 id 不在剧本里的集原样保留，由 ids 门点名。不改入参。
+ */
+export function renumberStoryboard(doc, script) {
+  const epOf = new Map((script?.episodes ?? []).filter((e) => isId(e?.id, 'ep')).map((e) => [e.id, e.ep]));
+  const episodes = (doc?.episodes ?? []).map((ep) => (epOf.has(ep?.id) ? { ...ep, ep: epOf.get(ep.id) } : ep));
+  return { ...doc, episodes };
 }
 
 export const segSeconds = (segment) => r1((segment?.cuts ?? []).reduce((n, c) => n + (c?.seconds ?? 0), 0));
@@ -902,7 +929,7 @@ export function gateReport(board, ctx = {}) {
   const NO_RECIPE = '本批分镜没有引用配方';
 
   add('ids', 'id 齐全且一致（集 id、段 id、切 id、场次与节拍引用）', eps.length > 0 && idBad.length === 0, idBad.join('；'));
-  add('coverage', '剧本节拍被恰好一次、按顺序、连续认领（分镜级）', bad.coverage.length === 0, script ? bad.coverage.join('；') : SKIP_SCRIPT);
+  add('coverage', '剧本节拍被恰好一次、按顺序认领，不跨场（分镜级）', bad.coverage.length === 0, script ? bad.coverage.join('；') : SKIP_SCRIPT);
   add('segment-cap', `每段 0 < 总秒数 ≤ ${params.maxSegmentSeconds}（一次生成的上限）`, eps.length > 0 && bad.segCap.length === 0, bad.segCap.join('；'));
   add('cut-length', `每个分镜 ${params.minCutSeconds}–${params.maxCutSeconds} 秒——短剧的注意力节奏`, eps.length > 0 && bad.cutLen.length === 0, bad.cutLen.join('；'));
   add('dialogue-fit', '认领节拍的台词装得进分镜秒数', bad.fit.length === 0, script ? bad.fit.join('；') : SKIP_SCRIPT);
@@ -1048,6 +1075,7 @@ export function exportPack(
 ) {
   const prefix = dir === '.' ? '' : `${dir}/`;
   const expanded = expandScript(script);
+  assertExportIds(board, expanded);
   const files = [];
   const manifest = [];
   const copies = [];
@@ -1133,7 +1161,7 @@ export function slug(name) {
  * 动态阈值由门自己算，映射里只写固定语义；未命中的 id 回落到原标签。 */
 const GATE_LABELS_EN = {
   'ids': 'IDs complete and consistent (episode, segment and cut IDs; scene and beat references)',
-  'coverage': 'Every script beat claimed exactly once, in order, contiguous (cut level)',
+  'coverage': 'Every script beat claimed exactly once, in order, never across scenes (cut level)',
   'segment-cap': 'Each segment 0 < total ≤ {1}s (the single-generation cap)',
   'cut-length': 'Every cut {0}–{1}s — the short-drama attention rhythm',
   'dialogue-fit': 'Dialogue of the claimed beats fits within the cut duration',
@@ -1989,6 +2017,8 @@ const USAGE = `novel-storyboard.mjs — novel-storyboard skill 的确定性工�
       [--write] [--seed <文本>]               默认打印结果，--write 原地写回；--seed 只用于样例与自测
   migrate <2.x sb.json> --script <3.0 script.json>   2.x 迁移到 3.0：sceneIndex → sceneRef，beats → beatIds，补 id
       [--write] [--seed <文本>]
+  renumber <sb.json> --script <script.json>   按集 id 把集号改成剧本里的集号（大纲插集、删集之后运行）
+      [--write]
   validate <sb.json> --script <script.json>   校验；有违规逐条打印并 exit 1
            [--outline] [--cast] [--art]       outline/cast 查提示词人名；art 只管显示名字
            [--shots <卡片目录>]                挂载镜头配方卡库，开 shot-recipe 门（不给就跳过）
@@ -2179,6 +2209,8 @@ function main(argv) {
     const dir = flag(rest, '--out', '.');
     const protocol = flag(rest, '--protocol', 'h3');
     if (!['h3', 'seedance'].includes(protocol)) throw new Error(`--protocol 只能是 h3 或 seedance，实际是 ${protocol}`);
+    // 拷图之前就查：拷图路径同样由段 id、切 id 拼成
+    assertExportIds(board, expandScript(ctx.script));
     // 分镜图在哪由用户指定：给了 --frames 就把找得到的拷进包里，不要求用户先手动放进去
     const framesFlag = flag(rest, '--frames');
     let copied = 0;
@@ -2268,6 +2300,14 @@ function main(argv) {
     const after = cmd === 'migrate' ? migrateStoryboard(before, script, rng) : assignStoryboardIds(before, { script, rng });
     const added = collectIds(after).size - collectIds(before).size;
     writeOrPrint(path, after, rest.includes('--write'), `✓ 补了 ${added} 个 id`);
+    return;
+  }
+
+  if (cmd === 'renumber') {
+    const [path] = rest;
+    const scriptPath = flag(rest, '--script');
+    if (!path || !scriptPath) throw new Error('用法：renumber <storyboard.json> --script <script.json> [--write]');
+    writeOrPrint(path, renumberStoryboard(readJson(path), readJson(scriptPath)), rest.includes('--write'), '✓ 已按剧本重写集号');
     return;
   }
 

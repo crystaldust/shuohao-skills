@@ -58,6 +58,6 @@ Full spec in `references/sheet.md`.
 node scripts/selftest.mjs
 ```
 
-168 assertions — seeding, gate-defeating cases for all 10 gates, rendering (zh/en report UI), export. No model calls, runs in about a second.
+173 assertions — seeding, gate-defeating cases for all 10 gates, rendering (zh/en report UI), export. No model calls, runs in about a second.
 
 **Only tested on macOS + Node 24.**

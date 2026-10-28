@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,6 +13,7 @@ import { isId, seededRng } from './ids.mjs';
 import {
   assignStoryboardIds,
   migrateStoryboard,
+  renumberStoryboard,
   segLabel,
   CAMERA_MOVES,
   DEFAULT_PARAMS,
@@ -1106,6 +1107,113 @@ const V2 = toV2(FIXTURE);
   const old = clone(SCRIPT);
   delete old.episodes[0].scenes[0].id;
   ok(msgOf(() => migrateStoryboard(V2, old)).includes('ids --write'), '剧本还没补 id 时迁移拒绝');
+  const bad3 = clone(V2);
+  bad3.episodes[0].segments[2].cuts[1].beats = [3, 1];
+  ok(msgOf(() => migrateStoryboard(bad3, SCRIPT)).includes('E01-03#2 的 beats [3, 1] 超出该场'), 'beats 反向区间时点名');
+}
+
+const errOf = (fn) => {
+  try { fn(); return ''; } catch (e) { return e.message; }
+};
+{
+  // 切到一半的 2.x 草稿：seedScenes 底稿按 3.0 剧本重新生成
+  const draft = clone(V2);
+  draft.episodes[0].seedScenes = [{ sceneIndex: 1, beats: [{ n: 1 }] }];
+  const m = migrateStoryboard(draft, SCRIPT, seededRng('渡口-storyboard'));
+  eq(JSON.stringify(m.episodes[0].seedScenes), JSON.stringify(seedFromScript(SCRIPT).episodes[0].seedScenes), '2.x 的 seedScenes 换成 3.0 底稿');
+  eq(JSON.stringify(migrateStoryboard(m, SCRIPT)), JSON.stringify(m), '带 3.0 底稿再迁移一次原样不变');
+  ok(!('seedScenes' in migrateStoryboard(V2, SCRIPT).episodes[0]), '没有底稿的集不凭空加底稿');
+}
+{
+  // 多集都缺集 id：每集按自己的集号抄到对应的集 id
+  const doc = clone(FIXTURE);
+  doc.episodes.push({ ep: 2, segments: [] });
+  delete doc.episodes[0].id;
+  const a = assignStoryboardIds(doc, { script: SCRIPT, rng: seededRng('t') });
+  eq(a.episodes.map((e) => e.id).join(','), `${SCRIPT.episodes[0].id},${SCRIPT.episodes[1].id}`, '多集各自抄到对应的集 id');
+}
+{
+  // 补 id 时新 id 计入已用集合：随机源连出两次同样的值，第二切必须重抽
+  const doc = clone(FIXTURE);
+  delete segAt(doc, 'E01-01').cuts[0].id;
+  delete segAt(doc, 'E01-02').cuts[0].id;
+  let n = 0;
+  const repeating = () => (n++ < 16 ? 0 : 1);
+  const a = assignStoryboardIds(doc, { script: SCRIPT, rng: repeating });
+  const [x, y] = [segAt(a, 'E01-01').cuts[0].id, segAt(a, 'E01-02').cuts[0].id];
+  ok(isId(x, 'ct') && isId(y, 'ct') && x !== y, '跨段补的切 id 不撞号');
+}
+{
+  // 大纲插集后剧本 renumber 过：分镜按集 id 刷新集号，标签跟着变
+  const script = clone(SCRIPT);
+  script.episodes = script.episodes.map((e) => ({ ...e, ep: e.ep + 1 }));
+  const ctx = { ...CTX, script };
+  ok(!gate(FIXTURE, 'ids', ctx).ok && gate(FIXTURE, 'ids', ctx).detail.includes('在剧本里是第 2 集'), '剧本集号变了，ids 门点名');
+  const before = JSON.stringify(FIXTURE);
+  const re = renumberStoryboard(FIXTURE, script);
+  eq(JSON.stringify(FIXTURE), before, 'renumberStoryboard 不改入参');
+  eq(re.episodes[0].ep, 2, '集号改成剧本里的集号');
+  eq(segAt(re, 'E02-01').id, SEG01.id, '标签跟着变成 E02-01，段 id 不动');
+  ok(gate(re, 'ids', ctx).ok, 'renumber 后 ids 门通过');
+  const orphan = clone(FIXTURE); orphan.episodes[0].id = 'ep_zzzzzzzz';
+  eq(renumberStoryboard(orphan, script).episodes[0].ep, 1, '集 id 不在剧本里的集原样保留');
+}
+{
+  // 剧本里 id 重复：按 id 查会认到后一个，分镜的 ids 门自己也要拦
+  const script = clone(SCRIPT);
+  script.episodes[0].scenes[1].flow[0].id = script.episodes[0].scenes[0].flow[0].id;
+  ok(gate(FIXTURE, 'ids', { ...CTX, script }).detail.includes(`剧本里节拍 id ${S1[0]} 重复`), '剧本节拍 id 重复被点名');
+  const script2 = clone(SCRIPT);
+  script2.episodes[1].scenes[0].id = script2.episodes[0].scenes[0].id;
+  ok(gate(FIXTURE, 'ids', { ...CTX, script: script2 }).detail.includes('剧本里场次 id'), '剧本场次 id 重复被点名');
+}
+{
+  // 导出前查 id：段 id、切 id 拼进文件路径，格式不对就不许落盘
+  const evil = clone(FIXTURE);
+  segAt(evil, 'E01-01').id = '../../pwn';
+  ok(errOf(() => exportPack(evil, SCRIPT)).includes('导出前 id 要先过 ids 门'), 'exportPack 拒绝格式不对的段 id');
+  const evil2 = clone(FIXTURE);
+  segAt(evil2, 'E01-01').cuts[0].id = '../x';
+  ok(errOf(() => exportPack(evil2, SCRIPT)).includes('切 id「../x」格式不对'), 'exportPack 拒绝格式不对的切 id');
+}
+{
+  // export CLI：落盘、--frames 拷图、--out、--images、参数报错
+  const BOARD = join(here, 'novel-storyboard.mjs');
+  const SCRIPT_PATH = join(here, '../references/test-fixtures/upstream/渡口-script.json');
+  const SAMPLE_PATH = join(here, '../examples/渡口-storyboard.json');
+  const dir = mkdtempSync(join(tmpdir(), 'storyboard-export-'));
+  const run = (...args) => spawnSync(process.execPath, [BOARD, ...args], { encoding: 'utf8', cwd: dir });
+  for (const c of SEG01.cuts) {
+    mkdirSync(join(dir, 'frames', SEG01.id), { recursive: true });
+    writeFileSync(join(dir, 'frames', SEG01.id, `${c.id}.png`), 'png');
+  }
+  const out = run('export', SAMPLE_PATH, '--script', SCRIPT_PATH, '--out', 'h3', '--frames', 'frames');
+  eq(out.status, 0, 'CLI export 正常退出');
+  ok(SEG01.cuts.every((c) => existsSync(join(dir, 'h3', SEG01.id, `${c.id}.png`))), '--frames 的分镜图按 <段 id>/<切 id>.png 拷进 --out');
+  ok(existsSync(join(dir, 'h3', SEG01.id, 'prompt.md')), '每段的 prompt.md 落盘');
+  const manifest = JSON.parse(readFileSync(join(dir, 'h3', 'manifest.json'), 'utf8'));
+  eq(manifest.find((m) => m.segment === SEG01.id).missing.length, 0, '拷进来的图不再标缺');
+  ok(manifest.find((m) => m.segment === segAt(FIXTURE, 'E01-02').id).missing.length > 0, '没给图的段照样标缺');
+  ok(out.stdout.includes(`拷入 ${SEG01.cuts.length} 张分镜图`), '报告拷了多少张图');
+
+  mkdirSync(join(dir, 'imgs'));
+  writeFileSync(join(dir, 'imgs', '沈知微-sheet.png'), 'png');
+  const OUTLINE_PATH = join(here, '../references/test-fixtures/upstream/渡口-outline.json');
+  eq(run('export', SAMPLE_PATH, '--script', SCRIPT_PATH, '--outline', OUTLINE_PATH, '--protocol', 'seedance', '--out', 'sd', '--images', 'imgs').status, 0, 'CLI export seedance 正常退出');
+  ok(existsSync(join(dir, 'sd', SEG06.id, 'ref-2.png')), '--images 的设定图拷进 Seedance 包');
+  ok(existsSync(join(dir, 'sd', 'seedance-manifest.json')), 'Seedance 包带 seedance-manifest.json');
+
+  // 段 id 写成「../frames/<段 id>」：拷图的源文件真的存在，不查 id 就会拷到 --out 外面
+  const evil = clone(FIXTURE);
+  segAt(evil, 'E01-01').id = `../frames/${SEG01.id}`;
+  writeFileSync(join(dir, 'evil.json'), JSON.stringify(evil));
+  const bad = run('export', 'evil.json', '--script', SCRIPT_PATH, '--out', 'a/b/out', '--frames', 'frames');
+  eq(bad.status, 1, 'CLI export 遇到格式不对的段 id 退出 1');
+  ok(bad.stderr.includes('导出前 id 要先过 ids 门'), 'CLI export 报错说明要先过 ids 门');
+  ok(!existsSync(join(dir, 'a')), '格式不对的 id 一个文件都不写');
+  eq(run('export', SAMPLE_PATH, '--script', SCRIPT_PATH, '--protocol', 'mp4').status, 1, 'CLI export 拒绝未知的 --protocol');
+  eq(run('export', SAMPLE_PATH).status, 1, 'CLI export 缺 --script 报错');
+  rmSync(dir, { recursive: true, force: true });
 }
 {
   const BOARD = join(here, 'novel-storyboard.mjs');
@@ -1131,6 +1239,17 @@ const V2 = toV2(FIXTURE);
   const once = readFileSync(file, 'utf8');
   run('ids', file, '--write');
   eq(readFileSync(file, 'utf8'), once, 'CLI ids 幂等');
+
+  // 不带 --seed 走加密随机：两次补出的 id 不能撞
+  writeFileSync(file, JSON.stringify(raw, null, 2) + '\n');
+  const fresh = () => segAt(JSON.parse(run('ids', file).stdout), 'E01-02').id;
+  const [x, y] = [fresh(), fresh()];
+  ok(isId(x, 'sg') && isId(y, 'sg') && x !== y, 'CLI ids 不带 --seed 两次补出的 id 互不相同');
+
+  writeFileSync(file, SAMPLE);
+  eq(run('renumber', file).status, 1, 'CLI renumber 缺 --script 报错');
+  eq(run('renumber', file, '--script', SCRIPT_PATH, '--write').status, 0, 'CLI renumber --write 正常退出');
+  eq(readFileSync(file, 'utf8'), SAMPLE, '集号本来就对时 renumber 不改文件');
   rmSync(dir, { recursive: true, force: true });
 }
 console.log(`✓ ${passed} 项自测全部通过`);

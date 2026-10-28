@@ -23,6 +23,7 @@
 
 | 门 | 规则 |
 | --- | --- |
+| **id 齐全一致** | 集 id 照抄大纲、集号与大纲一致（给 `--outline` 才对照）；每场、每拍有 id，不重复 |
 | **每集时长** | 预估落在 `targetSeconds` ±15% 内（语速、节拍秒数、容差都在 `params` 里可调） |
 | 单句台词长度 | ≤ 35 字——一口气说不完的台词也生成不了 |
 | 说话人合法 | speaker 必须在本场人物里，或明确标 `VO` |
@@ -72,6 +73,7 @@ node scripts/novel-script.mjs validate script.json \
 node scripts/novel-script.mjs checkup script.json                # 只跑质量门
 node scripts/novel-script.mjs ids script.json --outline outline.json --write   # 补场次、节拍 id（集 id 照抄大纲）
 node scripts/novel-script.mjs migrate old.json --outline outline.json --write   # 2.x 迁移到 3.0
+node scripts/novel-script.mjs renumber script.json --outline outline.json --write   # 大纲插集后按集 id 刷新集号
 node scripts/novel-script.mjs render script.json --html \
      --outline outline.json --art art.json \
      --cast cast.json > script-report.html                       # 出报告（--cast 带音色提示词）
@@ -92,8 +94,8 @@ node scripts/novel-script.mjs slug "渡口"                         # 安全文�
 ```
 SKILL.md                 给 agent 读的工作流
 scripts/
-  novel-script.mjs       seed / validate / checkup / render / slug
-  selftest.mjs           193 项断言，不调模型
+  novel-script.mjs       seed / ids / renumber / migrate / validate / checkup / render / slug
+  selftest.mjs           206 项断言，不调模型
 references/
   schema.md              script.json 结构 + 时长折算规则
   script-pass.md         写戏：硬规则、手感规则、常见病
@@ -110,6 +112,6 @@ assets/
 node scripts/selftest.mjs
 ```
 
-193 项断言，覆盖时长引擎 / 统计 / 质量门逐项击穿 / seed / 渲染（含英文界面）/ 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
+206 项断言，覆盖时长引擎 / 统计 / 质量门逐项击穿 / seed / 渲染（含英文界面）/ 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
 
 **只在 macOS + Node 24 上实测过。** 代码没有平台相关调用，Linux 和更低版本 Node 理论上没问题，但**没验过**。

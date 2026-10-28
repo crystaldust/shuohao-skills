@@ -2,7 +2,7 @@
 
 ## 3.0.0 — 稳定 id — 2026-10-26
 
-**集、剧本场次、剧本节拍、分镜段、分镜切都带程序分配的稳定 id，跨文件引用、质量门和导出文件名一律按 id 对账。** 2.x 里这五样东西都靠位置当身份：站位用 `(集号, 场号)` 找剧本场次，分镜用 `sceneIndex` 和 `beats: [起, 止]` 认领节拍，段号 `E01-01` 必须连号又兼作素材文件夹名。在中间插一拍、插一场、插一段，后面的编号全部顺移，引用它们的地方就悄悄指向了别的内容——站位挂到另一场上、分镜认领错开一格、生成好的视频按文件夹名对不回原来的段。质量门只能拦下其中一部分（比如节拍没人认领），拦不住「认领了错的拍」。
+**集、剧本场次、剧本节拍、分镜段、分镜切都带程序分配的稳定 id，跨文件引用、质量门和导出文件名一律按 id 对账。** 2.x 里这五样东西都靠位置当身份：站位按 `(集号, 场号)` 找剧本场次，分镜按 `sceneIndex` 和 `beats: [起, 止]` 认领节拍，段号 `E01-01` 必须连号又兼作素材文件夹名。在中间插一拍、插一场、插一段，后面的编号全部顺移，引用它们的地方就悄悄指向了别的内容——站位挂到另一场上、分镜认领错开一格、生成好的视频按文件夹名对不回原来的段。质量门只能拦下其中一部分（比如节拍没人认领），拦不住「认领了错的拍」。
 
 3.0 的规则是：**身份是 id，顺序是数组位置，编号只是显示。**id 形如 `sc_k3f9q2xa`（前缀 + 8 位 Crockford base32），由各 skill 的 `ids` 命令分配，模型新写的条目不带 id，已有的永远不改。保留下来的编号（集号、场号）都有一道门对照 id 指向的真相检查：编号可以过期，但过期一定会被发现。
 
@@ -18,22 +18,42 @@
 | novel-art | `usage.episodes` 由集号数组改成集 id 数组；`render --outline` 才显示集号 | `migrate art.json --outline outline.json --write` |
 | novel-script | 集 id 照抄大纲；每场 `id`（`sc_`）、每拍 `id`（`bt_`）必填；`hookBeat` 由 `[场, 拍]` 改成节拍 id；爽点认领按 `episodeRef` | `migrate script.json --outline outline.json --write` |
 | novel-staging | 每场新增 `sceneRef`（剧本场次 id）作为身份；`ep`、`scene` 保留为显示缓存 | `migrate staging.json --script script.json --write` |
-| novel-storyboard | 集 id 照抄剧本；段 `id` 改成 `sg_`、切新增 `id`（`ct_`）；`sceneIndex` → `sceneRef`；`beats: [起, 止]` → 逐拍列出的 `beatIds`；导出与 `--frames` 的路径由 `E01-01/f1.png` 改成 `<段 id>/<切 id>.png`，`manifest.json` 每段加 `label`、`order`、`ep` | `migrate storyboard.json --script script.json --write`；已经按 2.x 路径出好的分镜图，按新 `manifest.json` 的 `label` 对照改名 |
+| novel-storyboard | 集 id 照抄剧本；段 `id` 改成 `sg_`、切新增 `id`（`ct_`）；`sceneIndex` → `sceneRef`；`beats: [起, 止]` → 逐拍列出的 `beatIds`；导出与 `--frames` 的路径由 `E01-01/f1.png` 改成 `<段 id>/<切 id>.png`，`manifest.json` 每段加 `label`、`order`、`ep` | `migrate storyboard.json --script script.json --write`；已经按 2.x 路径出好的分镜图要改名，见下 |
 
 `migrate` 生成的 id 来自随机数，同一份文件迁移两次得到的 id 不同：迁移只做一次，结果提交进版本库。
+
+**2.x 路径出好的分镜图怎么改名。**`manifest.json` 只有运行 `export` 之后才有。迁移完分镜后先导出一次，再按 manifest 把旧文件挪到新路径：2.x 的 `<段标签>/f<k>.png` 对应 manifest 里这一段 `pictures` 的第 k 项（k 从 1 起；迁移不改段和切的顺序，所以段标签与 2.x 的段号一一对应）。
+
+```bash
+node skills/novel-storyboard/scripts/novel-storyboard.mjs export storyboard.json --script script.json --out h3
+node -e '
+const fs = require("fs"), path = require("path");
+const [oldDir] = process.argv.slice(1);
+for (const m of JSON.parse(fs.readFileSync("h3/manifest.json", "utf8"))) {
+  m.pictures.forEach((to, k) => {
+    const from = path.join(oldDir, m.label, `f${k + 1}.png`);
+    if (!fs.existsSync(from)) return;
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.renameSync(from, to);
+    console.log(`${from} → ${to}`);
+  });
+}' <2.x 分镜图目录>
+```
+
+**插集、插场之后。**id 不变，编号会过期；过期的编号由各自的 `ids` 门点名，再按上游的 id 运行 `renumber` 刷新。大纲插一集：先 `renumber --write`，再 `ids --write`（集号和位置对不上时 `ids` 拒绝按集号补爽点归属，免得新爽点挂到同号的旧集上）；然后按顺序刷新下游：script `renumber --outline`、storyboard `renumber --script`、staging `renumber --script`。剧本插一场只影响站位的场号，运行 staging 的 `renumber --script`。
 
 ### 新增
 
 - **`ids` 命令**（outline、script、storyboard）：给缺 id 的条目补 id，只补不改；默认打印结果，`--write` 原地写回。script 给 `--outline`、storyboard 给 `--script` 时，集 id 从上游照抄
-- **`migrate` 命令**（五个 skill）：2.x 文件一次性转成 3.0，按位置的引用改写成按 id 的引用；位置对不上时点名报错。3.0 里只有 `migrate` 允许按位置查找
-- **`renumber`**（outline）：按位置重写集号，并按 `episodeRef` 同步爽点的集号
-- **`--seed <文本>`**（`ids` / `migrate`）：确定性随机源，只用于样例和自测
+- **`migrate` 命令**（五个 skill）：2.x 文件一次性转成 3.0，按位置的引用改写成按 id 的引用；位置对不上时点名报错。3.0 里只有 `migrate` 按位置查找；`ids` 补集 id 时按集号照抄上游，集号过期时先 `renumber`
+- **`renumber`**：outline 按位置重写集号，并按 `episodeRef` 同步爽点的集号；script（`--outline`）、storyboard（`--script`）按集 id 把集号改成上游的集号；staging（`--script`）按 `sceneRef` 把集号、场号改成剧本的编号。只动编号，不碰 id
+- **`--seed <文本>`**（outline、script、storyboard 的 `ids` / `migrate`）：确定性随机源，只用于样例和自测
 - **剧本插一拍**：分镜的覆盖门只点名新的那一拍（「第 5 拍（bt_…）没人认领」），其余认领、台词对账原样有效；剧本插一场，站位的场号过期会被点名，开场位置仍然挂在原来那一场上
 - **分镜插段、重排**：段标签 `E01-02` 跟着位置变，段文件夹和分镜图文件名不变，已生成的素材照样对得上
 
 ### 质量门
 
-每个相关 skill 新增一道 `ids` 门，排在第一道：id 齐全、格式对、本文件内唯一，引用的 id 在给出的上游里都存在，显示用的编号与上游一致。
+每个相关 skill 新增一道 `ids` 门，排在第一道：id 齐全、格式对、本文件内唯一，引用的 id 在给出的上游里都存在，用于显示的编号与上游一致。staging 和 storyboard 的 `ids` 门还会查剧本自己的场次、节拍 id 有没有重复（按 id 查找时重复会悄悄认到后一个）。
 
 - novel-outline 14 → 15
 - novel-script 10 → 11
@@ -45,9 +65,13 @@
 - 公共 id 模块 `scripts/ids.mjs` 在五个 skill 各有一份（skill 要能单独拷走），`scripts/ids-sync-selftest.mjs` 检查五份逐字节相同
 - 新增 `scripts/fixtures-sync-selftest.mjs`：按各 `references/test-fixtures/upstream/README.md` 的来源清单，检查每份上游夹具与上游样例逐字节相同。novel-characters 的大纲夹具借此刷新为 3.0 版（skill 本身没有改动）
 - novel-storyboard 的 `schema.md` 修正两处旧错：素材文件名写成 `E01-01-f1.png`，与代码不一致；`h3Prompt` 的默认语言写成中文，实际默认英文
-- 样例《渡口》全部迁移到 3.0，各 skill 的样例用不同的种子，id 后缀不会互相撞上
+- 样例《渡口》全部迁移到 3.0，各 skill 的样例使用不同的种子，id 后缀不会互相撞上
+- novel-storyboard 的 `export` 在写任何文件之前先过 id 检查：段 id、切 id 直接拼进文件路径，格式不对（比如 `../x`）就拒绝导出，不会写到 `--out` 外面
+- novel-storyboard 的 `migrate` 遇到切到一半、还留着 `seedScenes` 底稿的 2.x 草稿，按 3.0 剧本重新生成底稿
+- novel-art 的 `render --outline` 遇到大纲里没有的集 id（报告里显示成 `?`）时打印警告
+- novel-art 的 `references/report-style.md` 修正旧错：门数写成 11，实际 10
 
-自测：character-refs 233、novel-art 168、novel-characters 337、novel-outline 287、novel-script 193、novel-staging 122、novel-storyboard 406，根目录组装器 92、ids 同步 23、夹具同步 58，全部通过。
+自测：character-refs 233、novel-art 173、novel-characters 337、novel-outline 293、novel-script 206、novel-staging 131、novel-storyboard 440，根目录组装器 92、ids 同步 25、夹具同步 58，全部通过。
 
 ## 2.2.1 — novel-staging 默认交付 HTML 工具报告 — 2026-10-15
 

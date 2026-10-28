@@ -764,6 +764,37 @@ eq(DEFAULT_PER_VOLUME, 15, '默认每卷 15 章');
   ok(gate(re, 'ids').ok, 'renumber 后 id 门通过');
 }
 
+// --- 插集撞号：新旧两集同号时，按集号补归属会挂错集，ids 必须拒绝 ---
+{
+  const o = clone();
+  const oldSecond = o.episodes[1].id;
+  const fresh = structuredClone(o.episodes[1]);
+  delete fresh.id;
+  o.episodes.splice(1, 0, fresh); // 作者给新集也写了 ep: 2，与原第 2 集同号
+  const extra = { ...structuredClone(o.beats[0]), id: 'B99', episode: 2 };
+  delete extra.episodeRef;
+  o.beats.push(extra);
+  let msg = '';
+  try { assignOutlineIds(o, seededRng('clash')); } catch (e) { msg = e.message; }
+  ok(msg.includes('集号和位置对不上') && msg.includes('先运行 renumber --write'), '集号和位置对不上时 ids 拒绝按集号补爽点归属');
+  const fixed = assignOutlineIds(renumberOutline(o), seededRng('clash'));
+  eq(fixed.beats.at(-1).episodeRef, fixed.episodes[1].id, '先 renumber 再 ids：新爽点挂到新插入的那一集');
+  ok(fixed.episodes[1].id !== oldSecond && fixed.episodes[2].id === oldSecond, '原第 2 集 id 不变，现在是第 3 位');
+  ok(gate(fixed, 'ids').ok, '先 renumber 再 ids 后 id 门通过');
+}
+
+// --- renumber：还没 id 的集不会吞掉缺归属的爽点 ---
+{
+  const o = clone();
+  const fresh = structuredClone(o.episodes[0]);
+  delete fresh.id;
+  o.episodes.splice(1, 0, fresh);
+  const loose = { ...structuredClone(o.beats[0]), id: 'B98', episode: 5 };
+  delete loose.episodeRef;
+  o.beats.push(loose);
+  eq(renumberOutline(o).beats.at(-1).episode, 5, '缺 episodeRef 的爽点集号原样保留，不被改成缺 id 那一集');
+}
+
 // --- CLI ---
 {
   const SCRIPT = join(here, 'novel-outline.mjs');
@@ -799,6 +830,13 @@ eq(DEFAULT_PER_VOLUME, 15, '默认每卷 15 章');
   eq(run('validate', file).status, 1, '插入一集后不 renumber 校验不通过');
   eq(run('renumber', file, '--write').status, 0, 'renumber --write 正常退出');
   eq(run('validate', file).status, 0, 'renumber 后校验通过');
+
+  // 不带 --seed 走加密随机：两个项目各补一次，id 不能撞
+  const idsOf = () => JSON.parse(run('ids', bare).stdout).episodes.map((e) => e.id);
+  const bare = join(dir, 'bare.json');
+  writeFileSync(bare, JSON.stringify(raw, null, 2) + '\n');
+  const [x, y] = [idsOf(), idsOf()];
+  ok(x.every((id) => isId(id, 'ep')) && !x.some((id) => y.includes(id)), '不带 --seed 两次补出的 id 互不相同');
   rmSync(dir, { recursive: true, force: true });
 }
 

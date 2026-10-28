@@ -97,6 +97,8 @@ node {baseDir}/scripts/novel-script.mjs ids <script.json> --outline <outline.jso
 
 每一场补上场次 id（`sc_`），每一拍补上节拍 id（`bt_`）。**id 由程序分配，写戏时不要写 id**；已有的 id 永远不改，返工、插拍之后再运行一次只会补新的。补完再填 `hookBeat`：抄兑现钩子那一拍的节拍 id。
 
+大纲插集、删集并 `renumber` 之后，剧本的集号会被 `ids` 门点名过期，运行 `renumber <script.json> --outline <outline.json> --write` 按集 id 刷新，不要手改。
+
 ### Step 3 — 校验 ⛔ 不能跳
 
 ```bash
@@ -158,7 +160,7 @@ seed 吃 outline.json；validate/render 的 `--outline` `--art` 负责对账和�
 node {baseDir}/scripts/selftest.mjs
 ```
 
-193 项断言，不调模型、不花额度。11 道质量门每一道都有击穿用例。改完脚本先跑这个。
+206 项断言，不调模型、不花额度。11 道质量门每一道都有击穿用例。改完脚本先跑这个。
 
 ## 自带样例
 

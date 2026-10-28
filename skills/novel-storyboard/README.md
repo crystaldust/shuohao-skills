@@ -114,6 +114,7 @@ node scripts/novel-storyboard.mjs render sb.json --html --lang en \
 node scripts/novel-storyboard.mjs export sb.json --script script.json   # H3 投产包
 node scripts/novel-storyboard.mjs ids sb.json --script script.json --write   # 补段 id、切 id（集 id 照抄剧本）
 node scripts/novel-storyboard.mjs migrate old.json --script script.json --write   # 2.x 迁移到 3.0
+node scripts/novel-storyboard.mjs renumber sb.json --script script.json --write   # 剧本集号变了以后按集 id 刷新集号
 ```
 
 `export` 的投产结构固定：**每段一个文件夹**，按段 id 命名（`sg_x96b305w/`）——分镜图按切 id 命名（`ct_dfg1t316.png`），和 `prompt.md` 同住（头部写明段标签 `E01-01`，Picture ↔ 文件对照表**明确哪张是首帧**、各图钉在第几秒，分隔线以下是 h3Prompt 原样），根部 `manifest.json` 每段带段 id、段标签、顺序、Picture 序图清单、切点时刻表、缺图标注。插段、重排之后标签会变，文件夹和图片名不变，已生成的素材照样对得上。一个段文件夹 = 一次 H3 生成的全部材料。
@@ -131,9 +132,9 @@ node scripts/novel-storyboard.mjs migrate old.json --script script.json --write 
 ```
 SKILL.md                 给 agent 读的工作流
 scripts/
-  novel-storyboard.mjs   seed / ids / migrate / validate / checkup / render / export / stats / slug
+  novel-storyboard.mjs   seed / ids / migrate / renumber / validate / checkup / render / export / stats / slug
   ids.mjs                稳定 id（与另外四个 skill 的副本逐字节相同）
-  selftest.mjs           406 项断言，不调模型
+  selftest.mjs           440 项断言，不调模型
 references/
   schema.md              storyboard.json 结构 + 时长约束链
   h3-prompt.md           H3 提示词写法规范（官方方法论内化版）
@@ -152,6 +153,6 @@ assets/
 node scripts/selftest.mjs
 ```
 
-406 项断言，覆盖节拍展开 / 稳定 id 与 2.x 迁移 / H3 骨架推导 / Seedance 拼装 / 统计与批次 / 质量门逐项击穿 / 配方卡库解析与挂载 / seed / 渲染（含中英界面、图位画幅）/ H3 与 Seedance 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
+440 项断言，覆盖节拍展开 / 稳定 id 与 2.x 迁移 / H3 骨架推导 / Seedance 拼装 / 统计与批次 / 质量门逐项击穿 / 配方卡库解析与挂载 / seed / 渲染（含中英界面、图位画幅）/ H3 与 Seedance 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
 
 **只在 macOS + Node 24 上实测过。** 代码没有平台相关调用，Linux 和更低版本 Node 理论上没问题，但**没验过**。

@@ -41,7 +41,7 @@ metadata:
 
 给 AI 短剧出**分镜**——管线里第一个直接面对视频模型的层。**前提刻在骨子里：镜头是生成出来的，多切一镜的成本几乎为零**，所以这里不心疼镜头数量，上限只有一个：视频模型单段生成的时长（默认 15 秒）。
 
-**核心机制：镜头认领节拍。** 每段用 `sceneRef` 指向剧本的场次 id，每切用 `beatIds` 逐拍列出它认领的节拍 id，镜头不许跨场次——换景必换镜。段和切也各有程序分配的 id（`sg_` / `ct_`），导出的文件夹和分镜图按 id 命名；「E01-02」「#3」这类编号按位置推算，只用于显示。剧本里插一拍、分镜里插一段或重排，认领和已生成的素材都不会悄悄挂错。这让分镜和剧本的关系变成可机械对账的：
+**核心机制：镜头认领节拍。** 每段使用 `sceneRef` 指向剧本的场次 id，每切使用 `beatIds` 逐拍列出它认领的节拍 id，镜头不许跨场次——换景必换镜。段和切也各有程序分配的 id（`sg_` / `ct_`），导出的文件夹和分镜图按 id 命名；「E01-02」「#3」这类编号按位置推算，只用于显示。剧本里插一拍、分镜里插一段或重排，认领和已生成的素材都不会悄悄挂错。这让分镜和剧本的关系变成可机械对账的：
 
 | 交付 | 解决什么 |
 | --- | --- |
@@ -102,7 +102,7 @@ node {baseDir}/scripts/novel-storyboard.mjs seed <script.json> --eps 1-3 --aspec
 node {baseDir}/scripts/novel-storyboard.mjs ids <storyboard.json> --script <script.json> --write
 ```
 
-每段补上段 id（`sg_`），每切补上切 id（`ct_`）。**id 由程序分配，切镜时不要写段 id 和切 id**；`sceneRef` 和 `beatIds` 要写，从 `seedScenes` 照抄。已有的 id 永远不改，插段、插切之后再运行一次只会补新的。2.x 的分镜（`sceneIndex` + `beats` 区间）用 `migrate <old.json> --script <script.json> --write` 一次性转过来。
+每段补上段 id（`sg_`），每切补上切 id（`ct_`）。**id 由程序分配，切镜时不要写段 id 和切 id**；`sceneRef` 和 `beatIds` 要写，从 `seedScenes` 照抄。已有的 id 永远不改，插段、插切之后再运行一次只会补新的。2.x 的分镜（`sceneIndex` + `beats` 区间）使用 `migrate <old.json> --script <script.json> --write` 一次性转过来。大纲插集、删集后剧本的集号变了，运行 `renumber <storyboard.json> --script <script.json> --write` 按集 id 刷新集号，段标签跟着变，段 id 和导出路径不变。
 
 ### Step 3 — 校验 ⛔ 不能跳
 
@@ -189,7 +189,7 @@ node {baseDir}/scripts/novel-storyboard.mjs stats
 node {baseDir}/scripts/selftest.mjs
 ```
 
-406 项断言，不调模型、不花额度。18 道质量门每一道都有击穿用例。改完脚本先跑这个。
+440 项断言，不调模型、不花额度。18 道质量门每一道都有击穿用例。改完脚本先跑这个。
 
 ## 自带样例
 

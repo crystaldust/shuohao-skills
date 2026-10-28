@@ -107,7 +107,7 @@ stage 就是流程门：骨架拍板前过 `skeleton`，**写分集之前必须�
 
 ## 稳定 id 与插入一集
 
-集号只是显示用的编号，身份是 `id`。顺序只看 `episodes` 数组里的位置。
+集号只是用于显示的编号，身份是 `id`。顺序只看 `episodes` 数组里的位置。
 
 ```bash
 node scripts/novel-outline.mjs ids outline.json --write        # 补集 id、补爽点归属（已有的不动）
@@ -115,7 +115,7 @@ node scripts/novel-outline.mjs renumber outline.json --write   # 按位置重编
 node scripts/novel-outline.mjs migrate old-outline.json --write # 2.x 大纲迁移到 3.0（等同 ids）
 ```
 
-- **插入一集**：把新的一集放进数组（不写 `id`），运行 `ids --write` 补上 id。这时「ep 从 1 连续」的校验会报错，再运行 `renumber --write`：每集的 `ep` 改成位置 + 1，每个爽点的 `episode` 按 `episodeRef` 同步，`params.episodes` 跟着更新。其他集的 id 不变，下游按 id 对账，不受影响
+- **插入一集**：把新的一集放进数组（不写 `id`，`ep` 随便写），先运行 `renumber --write`：每集的 `ep` 改成位置 + 1，每个爽点的 `episode` 按 `episodeRef` 同步，`params.episodes` 跟着更新；再运行 `ids --write` 给新的一集补 id，新写的爽点这时按集号补上 `episodeRef`。顺序反过来也行，但如果有还没 `episodeRef` 的爽点、集号又和位置对不上，`ids` 会拒绝补归属，免得新爽点挂到同号的旧集上。其他集的 id 不变，下游的引用都不会挂错；下游的集号显示缓存会被各自的 `ids` 门点名，按顺序运行 script 的 `renumber --outline`、storyboard 的 `renumber --script`、staging 的 `renumber --script` 刷新
 - **删掉一集**：直接从数组里删，运行 `renumber --write`；归属在被删那一集的爽点会被 `ids` 门点名，改归属或删掉这个爽点
 - `--seed <文本>` 让 `ids` 使用确定性随机源，同样的输入得到同样的 id。**只用于样例与自测**，真实项目不加
 - `C01`、`S01`、`P01`、`B01` 这些编号由模型在骨架里写定，写定后不重排——它们本来就是显式 id，下游直接引用

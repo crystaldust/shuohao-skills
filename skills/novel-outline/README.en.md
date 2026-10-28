@@ -18,7 +18,7 @@ Outputs `outline.json`, a Markdown report, and a self-contained `outline-report.
 
 ## The quality gates are code
 
-The core stance of this skill: **a checklist the model grades itself on is worthless.** All 15 gates are deterministic checks in `validate`, not prose for the model to read — per-tier cast caps (leads 1–5, supporting ≤ 10, functional ≤ 10), a narrative-prop cap (≤ 8; `props` is optional and the gate says so when absent), a primary-scene cap that **scales with episode count** (4 + ⌈episodes/10⌉ clamped to 5–15 — tuned for AI production, where scenes are generated and the cap guards consistency assets rather than set-building money), reuse plans for one-off scenes, beat gaps, episode-1 hook, major-beat timing, three-fields-per-episode, crowd-scene plans, risk keywords flagged, reference integrity (no jobless characters, no unused scenes, no unused props, no dangling IDs), and no quoted dialogue in synopses.
+The core stance of this skill: **a checklist the model grades itself on is worthless.** All 15 gates are deterministic checks in `validate`, not prose for the model to read — stable IDs (every episode has one, every beat's `episodeRef` points at a real episode and agrees with its `episode` number), per-tier cast caps (leads 1–5, supporting ≤ 10, functional ≤ 10), a narrative-prop cap (≤ 8; `props` is optional and the gate says so when absent), a primary-scene cap that **scales with episode count** (4 + ⌈episodes/10⌉ clamped to 5–15 — tuned for AI production, where scenes are generated and the cap guards consistency assets rather than set-building money), reuse plans for one-off scenes, beat gaps, episode-1 hook, major-beat timing, three-fields-per-episode, crowd-scene plans, risk keywords flagged, reference integrity (no jobless characters, no unused scenes, no unused props, no dangling IDs), and no quoted dialogue in synopses.
 
 Why tiers instead of one flat cap: a flat cap conflates *who the audience must remember* with *how many consistent faces production must maintain*. The lead cap guards screen time and memory; the support/functional caps guard **AI character-asset cost** — and the asset list converts tiers into workload automatically (leads → full model sheets, supporting → bust references, functional → prompt-only). Unnamed extras stay off the table entirely. Functional roles legitimately have no arc — the doctor is there to stitch a wound.
 
@@ -63,7 +63,7 @@ Failing gates don't block rendering — showing the problems is the point.
 
 ## Stable episode IDs
 
-An episode's identity is its `id` (`ep_` plus 8 characters), assigned by the script — never written by the model, never changed once assigned. The episode number `ep` is only a display label that must equal the array position. Downstream skills (script, art, staging, storyboard) join on the id, so inserting an episode never silently re-points anything.
+An episode's identity is its `id` (`ep_` plus 8 characters), assigned by the script — never written by the model, never changed once assigned. The episode number `ep` is only a display label that must equal the array position. Downstream skills (script, art, staging, storyboard) join on the id, so inserting an episode never silently re-points anything. Their cached episode numbers do go stale — each skill's `ids` gate names them, and `renumber` (script `--outline`, storyboard and staging `--script`) refreshes them from the upstream IDs.
 
 ```bash
 node scripts/novel-outline.mjs ids outline.json --write        # assign episode IDs, bind each beat to its episode (episodeRef)
@@ -89,6 +89,6 @@ novel-outline owns adaptation structure (cutting, merging, beat placement, episo
 node scripts/selftest.mjs
 ```
 
-287 assertions — chunking, validation, gate-defeating cases, asset aggregation, rendering (both UI languages), export. No model calls, runs in about a second.
+293 assertions — chunking, validation, gate-defeating cases, asset aggregation, rendering (both UI languages), export. No model calls, runs in about a second.
 
 **Only tested on macOS + Node 24.**

@@ -106,7 +106,7 @@ node {baseDir}/scripts/novel-art.mjs render <剧名>-art.json --md   --outline <
 node {baseDir}/scripts/novel-art.mjs render <剧名>-art.json --html --outline <outline.json> > art-report.html
 ```
 
-`usage.episodes` 记的是集 id（来自 outline.json），不是集号：给了 `--outline` 报告才把它显示成集号，不给只显示集数。2.x 的 art.json 用 `migrate <art.json> --outline <3.0 outline.json> --write` 一次性转过来（大纲要先用 novel-outline 的 `migrate` 迁移）。
+`usage.episodes` 记的是集 id（来自 outline.json），不是集号：给了 `--outline` 报告才把它显示成集号，不给只显示集数。2.x 的 art.json 使用 `migrate <art.json> --outline <3.0 outline.json> --write` 一次性转过来（大纲要先使用 novel-outline 的 `migrate` 迁移）。`render --outline` 遇到大纲里没有的集 id 会打印警告，报告里显示成 `?`。
 
 报告界面默认中文；用户要英文界面就加 `--lang en`（或在 art.json 顶层写 `"lang": "en"`，`--lang` 优先）。`render` 默认去 art.json 同级的 `images/<slug>-sheet.png` 找图（场景和道具都找），图在别处就用 `--images <目录>` 指过去——**本 skill 不产生这些文件**，下游出完图重跑一次 render 就能嵌进报告。报告含：KPI 带、场景清单、场景设定卡、道具清单、道具设定卡（锚点核对表 / 状态变体 / 提示词包全带复制按钮）、质量门面板、导出 JSON（下载的就是 art.json 原样）。
 
@@ -150,7 +150,7 @@ seed 吃 outline.json 的场景与道具两块（大纲没有 `props` 时道具�
 node {baseDir}/scripts/selftest.mjs
 ```
 
-168 项断言，不调模型、不花额度。10 道质量门每一道都有击穿用例。改完脚本先跑这个。
+173 项断言，不调模型、不花额度。10 道质量门每一道都有击穿用例。改完脚本先跑这个。
 
 ## 自带样例
 

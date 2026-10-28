@@ -208,6 +208,11 @@ function idProblems(eps, beats) {
 /** 给缺 id 的集补上 id，按集号给缺归属的爽点补上 episodeRef。已有的都不动，不改入参。 */
 export function assignOutlineIds(outline, rng = cryptoRng) {
   const { items: episodes } = assignIds(outline?.episodes ?? [], 'ep', collectIds(outline), rng);
+  // 按集号补归属的前提是集号就是位置：插集后没 renumber，新旧两集可能同号，爽点会被悄悄挂到旧集
+  const off = episodes.findIndex((e, i) => e?.ep !== i + 1);
+  if (off !== -1 && (outline?.beats ?? []).some((b) => b?.episodeRef === undefined)) {
+    throw new Error(`第 ${off + 1} 位的集写的是第 ${episodes[off]?.ep} 集：集号和位置对不上，按集号补爽点归属会挂错集。先运行 renumber --write，再运行 ids --write`);
+  }
   const byEp = new Map(episodes.filter((e) => isId(e?.id, 'ep')).map((e) => [e.ep, e.id]));
   // episodeRef 紧跟在 episode 后面：两个字段说的是同一件事，挨着才好对照
   const withRef = (b, ref) =>
@@ -221,7 +226,8 @@ export function assignOutlineIds(outline, rng = cryptoRng) {
 /** 按位置重写集号，并按 episodeRef 同步爽点的集号。只动编号，不碰 id。 */
 export function renumberOutline(outline) {
   const episodes = (outline?.episodes ?? []).map((e, i) => ({ ...e, ep: i + 1 }));
-  const epOf = new Map(episodes.map((e) => [e.id, e.ep]));
+  // 还没 id 的集不进对照表：否则 undefined 键会把缺 episodeRef 的爽点挂到这一集
+  const epOf = new Map(episodes.filter((e) => isId(e?.id, 'ep')).map((e) => [e.id, e.ep]));
   const beats = (outline?.beats ?? []).map((b) => (epOf.has(b?.episodeRef) ? { ...b, episode: epOf.get(b.episodeRef) } : b));
   const params = outline?.params && outline.params.episodes !== episodes.length ? { ...outline.params, episodes: episodes.length } : outline?.params;
   return { ...outline, ...(params ? { params } : {}), episodes, ...(outline?.beats ? { beats } : {}) };

@@ -40,6 +40,7 @@ eq(newId('sc', new Set(), seededRng('x')), a, '同一种子分配出同一个 id
 ok(newId('sc', new Set(), seededRng('y')) !== a, '换种子换 id');
 ok(isId(a, 'sc') && !isId(a, 'ep'), 'isId 按前缀区分');
 ok(!isId('sc_1234567') && !isId('sc_1234567i') && !isId('xx_12345678') && !isId(42), '长度、字母表、前缀、类型不对都不算');
+ok(!isId('sc_123456789') && !isId('sc_12345678\n') && !isId(' sc_12345678') && !isId('../sc_12345678'), '过长、带换行、带空格、带路径都不算');
 assert.throws(() => newId('zz'), /未知的 id 前缀/);
 passed += 1;
 
@@ -56,11 +57,14 @@ eq(newId('ep', new Set(['ep_00000000']), twoValues), 'ep_11111111', '撞号就�
 /* ---------------- 随机源 ---------------- */
 
 let inRange = true;
-for (let i = 0; i < 1000; i++) {
+const seen = new Set();
+for (let i = 0; i < 4000; i++) {
   const v = cryptoRng();
   if (!(Number.isInteger(v) && v >= 0 && v < 32)) inRange = false;
+  seen.add(v);
 }
 ok(inRange, 'cryptoRng 只出 0–31');
+eq(seen.size, 32, 'cryptoRng 32 个值都出得来（4000 次里漏掉某个值的概率小于 1e-50）');
 
 /* ---------------- assignIds ---------------- */
 

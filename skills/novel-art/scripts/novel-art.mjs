@@ -510,6 +510,13 @@ function episodesText(ids, ctx, t) {
   return ids.map((id) => epOf.get(id) ?? '?').join(t.listSep);
 }
 
+/** 出现集里大纲没有的集 id（大纲删集、重建后遗留的旧 id）：报告里显示成 ?，render 时另外警告。 */
+export function strayEpisodeIds(doc, outline) {
+  const known = new Set((outline?.episodes ?? []).map((e) => e?.id));
+  return [...(doc?.scenes ?? []), ...(doc?.props ?? [])].flatMap((item) =>
+    (item?.usage?.episodes ?? []).filter((id) => !known.has(id)).map((id) => `${item.id} 的 ${id}`));
+}
+
 export function renderMarkdown(doc, lang = null, ctx = {}) {
   const t = tOf(lang ?? doc?.lang);
   const props = doc.props ?? [];
@@ -1048,6 +1055,8 @@ function main(argv) {
     }
     const outlinePath = flag(rest, '--outline');
     const ctx = outlinePath ? { outline: readJson(outlinePath) } : {};
+    const stray = ctx.outline ? strayEpisodeIds(doc, ctx.outline) : [];
+    if (stray.length) console.error(`⚠️ 出现集里有 ${stray.length} 个集 id 不在大纲里，报告里显示成 ?：${stray.slice(0, 5).join('、')}${stray.length > 5 ? ' 等' : ''}`);
     process.stdout.write((rest.includes('--html') ? renderHtml(doc, lang, ctx) : renderMarkdown(doc, lang, ctx)) + '\n');
     return;
   }

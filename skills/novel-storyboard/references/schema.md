@@ -20,7 +20,7 @@
 
 `promptLang` 可省略（**默认 `en`——官方规范口径**）：整条英文，台词在 `<d>[Chinese]` 里保留原文。设成 `zh` 可切整条中文（对齐指令、字段名、镜头标记都有中文版）——偏离官方推荐的备选项。**禁角色名不跟着语言变**：两种模式的 H3 正文都用通用身份。
 
-`episodes[].id` 是集 id，**照抄 script.json 那一集的 id**（seed 自动带上）；`ep` 是显示用的集号，给了 `--script` 时 `ids` 门检查它跟剧本一致。
+`episodes[].id` 是集 id，**照抄 script.json 那一集的 id**（seed 自动带上）；`ep` 是用于显示的集号，给了 `--script` 时 `ids` 门检查它跟剧本一致；剧本的集号变了，运行 `renumber --script` 刷新。
 
 **Seedance 视频提示词不存在 JSON 里**：它由程序从 `shot`、构图量化字段、`blocking`、`soundscape`、`music` 和剧本台词现拼（结构见 `references/seedance-prompt.md`），报告和 `export --protocol seedance` 都用同一个拼法。
 
@@ -93,7 +93,7 @@ non_diegetic_music: …（1–3 句，没有就 N/A）
 
 - 集 `id` 照抄剧本；段 `sg_…`、切 `ct_…` 由 `ids --write` 分配，**切镜时不写**，已有的永远不改
 - `sceneRef`、`beatIds` 引用剧本的场次 id 和节拍 id，从 `seedScenes` 照抄
-- **显示标签**：段标签 `E01-02` = 集号 + 段在这一集里的位置，切号 `#3` = 切在段内的位置。报告、对白表、门的提示信息用它们；导出的文件夹、图片名和 `manifest.json` 的 `segment` 用 id，`label` 与 `order` 只是显示
+- **显示标签**：段标签 `E01-02` = 集号 + 段在这一集里的位置，切号 `#3` = 切在段内的位置。报告、对白表、门的提示信息使用它们；导出的文件夹、图片名和 `manifest.json` 的 `segment` 使用 id，`label` 与 `order` 只是显示
 - **剧本插一拍**：覆盖门点名「第 N 拍（bt_…）没人认领」，把它的 id 加进对应那一切的 `beatIds`（或新切一镜，不写 id，再运行 `ids --write`）
 - **插一段、重排**：直接改 `segments` 数组，运行 `ids --write` 只给新的段补 id；已生成的素材按段 id、切 id 对回，不受影响
 - `migrate <2.x storyboard.json> --script <3.0 script.json>`：`sceneIndex` → `sceneRef`，`beats [起, 止]` → 逐拍的 `beatIds`，补集、段、切 id

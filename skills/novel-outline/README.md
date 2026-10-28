@@ -22,6 +22,7 @@
 
 | 门 | 默认阈值 |
 | --- | --- |
+| **id 齐全一致** | 每集有 id、不重复；每个爽点的 `episodeRef` 指向真实的集，`episode` 集号与它一致 |
 | 主角组（男女主 + 主反派） | 1–5 人 |
 | 有名字的重要配角 | ≤ 10 人 |
 | 功能性角色（医生、店员……占脸不占名） | ≤ 10 人 |
@@ -109,7 +110,7 @@ SKILL.md                 给 agent 读的工作流
 scripts/
   novel-outline.mjs      chunk / validate / checkup / render / assets / ids / renumber / migrate
   ids.mjs                稳定 id（五个 skill 各有一份相同的副本）
-  selftest.mjs           287 项断言，不调模型
+  selftest.mjs           293 项断言，不调模型
 references/
   schema.md              outline.json 结构 + 硬规则
   volume-pass.md         分卷摘要怎么写
@@ -128,6 +129,6 @@ assets/
 node scripts/selftest.mjs
 ```
 
-287 项断言，覆盖分卷 / 校验 / 质量门逐项击穿 / 资产汇总 / 渲染（中英两套界面）/ 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
+293 项断言，覆盖分卷 / 校验 / 质量门逐项击穿 / 资产汇总 / 渲染（中英两套界面）/ 导出。不调模型、不花额度、1 秒跑完。改完脚本先跑这个。
 
 **只在 macOS + Node 24 上实测过。** 代码没有平台相关调用，Linux 和更低版本 Node 理论上没问题，但**没验过**。

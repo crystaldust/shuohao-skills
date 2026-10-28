@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { isId } from './ids.mjs';
 import {
   migrateArt,
+  strayEpisodeIds,
   ANCHOR_RANGE,
   castNamesOf,
   gateReport,
@@ -492,6 +493,9 @@ ok([...FIXTURE.scenes, ...FIXTURE.props].every((x) => x.usage.episodes.every((id
   const d = clone();
   d.scenes[0].usage.episodes = [1];
   ok(validateArt(d).some((x) => x.includes('usage.episodes 必须是集 id 数组')), '出现集写集号被拦');
+  const pd = clone();
+  pd.props[0].usage.episodes = [1];
+  ok(validateArt(pd).some((x) => x.includes(`[${pd.props[0].name}]`) &&x.includes('usage.episodes 必须是集 id 数组')), '道具的出现集写集号同样被拦');
 }
 {
   const s01Line = (md) => md.split('\n').find((l) => l.startsWith('| S01 '));
@@ -502,6 +506,8 @@ ok([...FIXTURE.scenes, ...FIXTURE.props].every((x) => x.usage.episodes.every((id
   const stray = clone();
   stray.scenes[0].usage.episodes = [...stray.scenes[0].usage.episodes, 'ep_zzzzzzzz'];
   ok(s01Line(renderMarkdown(stray, null, { outline: OUTLINE })).includes('?'), '大纲里找不到的集 id 显示成 ?');
+  eq(strayEpisodeIds(FIXTURE, OUTLINE).length, 0, '样例的出现集都在大纲里');
+  eq(strayEpisodeIds(stray, OUTLINE).join(','), 'S01 的 ep_zzzzzzzz', '大纲里没有的集 id 逐个点名');
 }
 {
   // 2.x 美术稿：出现集是集号
@@ -527,7 +533,13 @@ ok([...FIXTURE.scenes, ...FIXTURE.props].every((x) => x.usage.episodes.every((id
   eq(run('migrate', oldFile).status, 1, 'CLI migrate 缺 --outline 报错');
   eq(run('migrate', oldFile, '--outline', outlineFile, '--write').status, 0, 'CLI migrate --write 正常退出');
   eq(readFileSync(oldFile, 'utf8'), JSON.stringify(FIXTURE, null, 2) + '\n', '写回的文件与样例逐字节相同');
-  ok(run('render', oldFile, '--outline', outlineFile).stdout.includes('1、2、3、4、5、6'), 'CLI render --outline 显示集号');
+  const rendered = run('render', oldFile, '--outline', outlineFile);
+  ok(rendered.stdout.includes('1、2、3、4、5、6'), 'CLI render --outline 显示集号');
+  ok(!rendered.stderr.includes('不在大纲里'), '集 id 都在大纲里时不警告');
+  const strayDoc = JSON.parse(readFileSync(oldFile, 'utf8'));
+  strayDoc.scenes[0].usage.episodes.push('ep_zzzzzzzz');
+  writeFileSync(oldFile, JSON.stringify(strayDoc));
+  ok(run('render', oldFile, '--outline', outlineFile).stderr.includes('1 个集 id 不在大纲里'), 'CLI render 对大纲里没有的集 id 打警告');
   rmSync(dir, { recursive: true, force: true });
 }
 console.log(`✓ ${passed} 项自测全部通过`);

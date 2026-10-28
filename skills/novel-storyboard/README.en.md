@@ -45,7 +45,7 @@ Same stance as the other four skills in this repo: **a checklist the model grade
 | No names in video prompts | the H3 body (in either language) and the Seedance shot text carry no character names or aliases — required by both official prompt guides. Checked with `--outline` / `--cast`; skipping is **announced** |
 | **Composition fields** | `blocking` per segment; lens / camera position / composition / eyeline / focus / stability per cut, stability from the enum |
 | **Seedance shot text** | every cut's `shot` is Chinese and non-empty, with no timings, shot numbers, image references, H3 markers or `{}` `<>` `（）` — the program adds those from the real structure |
-| Reference integrity | scene index / characters / props all audited against the script scene |
+| Reference integrity | scene ID (`sceneRef`) / characters / props all audited against the script scene |
 | **Shot recipe** (optional mount) | only checked with `--shots <cards dir>`: a cut's `recipe` id exists in the library, every must-phrase of that card appears in the cut's frame prompt, and a multi-cut recipe runs long enough. Without `--shots` the skip is **announced**; so is "no cut references a recipe" |
 
 The selftest **defeats every gate on purpose** to prove each one actually blocks.
@@ -108,6 +108,7 @@ node scripts/novel-storyboard.mjs render sb.json --html --lang en --script scrip
 node scripts/novel-storyboard.mjs export sb.json --script script.json   # per-segment folders named by segment ID: <cut ID>.png + prompt.md
 node scripts/novel-storyboard.mjs ids sb.json --script script.json --write       # assign segment / cut IDs (episode IDs copied from the script)
 node scripts/novel-storyboard.mjs migrate old.json --script script.json --write   # migrate a 2.x storyboard
+node scripts/novel-storyboard.mjs renumber sb.json --script script.json --write  # refresh episode numbers after the script's numbers change
 ```
 
 ## Limits
@@ -124,7 +125,7 @@ node scripts/novel-storyboard.mjs migrate old.json --script script.json --write 
 node scripts/selftest.mjs
 ```
 
-406 assertions — beat expansion, stable IDs and 2.x migration, H3 skeleton derivation, Seedance assembly, stats and batching, gate-defeating cases, recipe-card parsing and mounting, seed, rendering (both report UI languages, frame-slot aspect), H3 and Seedance export. No model calls, runs in about a second.
+440 assertions — beat expansion, stable IDs and 2.x migration, H3 skeleton derivation, Seedance assembly, stats and batching, gate-defeating cases, recipe-card parsing and mounting, seed, rendering (both report UI languages, frame-slot aspect), H3 and Seedance export. No model calls, runs in about a second.
 
 The bundled example (`examples/渡口-storyboard.json`) is a complete episode-1 storyboard — 10 segments, 34 cuts claiming all 35 script beats at ~3.5s per cut, 119s against a 120s target, 2 generation batches, every segment carrying a fully audited H3 prompt.
 

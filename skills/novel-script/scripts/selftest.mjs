@@ -14,6 +14,7 @@ import {
   DEFAULT_PARAMS,
   assignScriptIds,
   migrateScript,
+  renumberScript,
   computeStats,
   gateReport,
   lineChars,
@@ -535,6 +536,33 @@ ok(html.includes('lang="zh"'), '默认报告 html lang 是 zh');
   ok(msg.includes('--outline'), '迁移必须给大纲');
 }
 {
+  // 补 id 时新 id 计入已用集合：随机源连出两次同样的值，第二拍必须重抽
+  const doc = clone(FIXTURE);
+  delete doc.episodes[0].scenes[0].flow[0].id;
+  delete doc.episodes[0].scenes[1].flow[0].id;
+  let n = 0;
+  const repeating = () => (n++ < 16 ? 0 : 1);
+  const out = assignScriptIds(doc, { outline: OUTLINE, rng: repeating });
+  const [a, b] = [out.episodes[0].scenes[0].flow[0].id, out.episodes[0].scenes[1].flow[0].id];
+  ok(isId(a, 'bt') && isId(b, 'bt') && a !== b, '跨场补的节拍 id 不撞号');
+}
+{
+  // 大纲在第 2 集前插了一集并 renumber：剧本按集 id 刷新集号
+  const outline = clone(OUTLINE);
+  outline.episodes.splice(1, 0, { ...clone(outline.episodes[1]), id: 'ep_zzzzzzzz' });
+  outline.episodes = outline.episodes.map((e, i) => ({ ...e, ep: i + 1 }));
+  const ctx = { ...CTX, outline };
+  ok(!gate(FIXTURE, 'ids', ctx).ok, '大纲插集后剧本的集号被 ids 门点名');
+  const before = JSON.stringify(FIXTURE);
+  const re = renumberScript(FIXTURE, outline);
+  eq(JSON.stringify(FIXTURE), before, 'renumberScript 不改入参');
+  eq(re.episodes.map((e) => e.ep).join(','), '1,3,4,5,6,7', '集号改成大纲里的集号');
+  ok(re.episodes.every((e, i) => e.id === FIXTURE.episodes[i].id), '集 id 不动');
+  ok(gate(re, 'ids', ctx).ok, 'renumber 后 ids 门通过');
+  const orphan = clone(FIXTURE); orphan.episodes[0].id = 'ep_yyyyyyyy';
+  eq(renumberScript(orphan, outline).episodes[0].ep, 1, '集 id 不在大纲里的集原样保留（交给 ids 门点名）');
+}
+{
   // CLI
   const SCRIPT = join(here, 'novel-script.mjs');
   const OUTLINE_PATH = join(here, '../references/test-fixtures/upstream/渡口-outline.json');
@@ -547,11 +575,19 @@ ok(html.includes('lang="zh"'), '默认报告 html lang 是 zh');
   const printed = run('ids', file, '--outline', OUTLINE_PATH, '--seed', 'cli');
   eq(printed.status, 0, 'ids 正常退出');
   ok(JSON.parse(printed.stdout).episodes[0].scenes.every((s) => isId(s.id, 'sc')), 'ids 打印补好 id 的 JSON');
+  const fresh = JSON.parse(run('ids', file).stdout).episodes[0].scenes.map((s) => s.id);
+  ok(fresh.every((id) => isId(id, 'sc')) && !fresh.some((id) => JSON.parse(printed.stdout).episodes[0].scenes.some((s) => s.id === id)), '不带 --seed 走加密随机，与带种子的结果不同');
+  const again = JSON.parse(run('ids', file).stdout).episodes[0].scenes.map((s) => s.id);
+  ok(!again.some((id) => fresh.includes(id)), '不带 --seed 两次补出的 id 互不相同');
   eq(run('ids', file, '--outline', OUTLINE_PATH, '--seed', 'cli', '--write').status, 0, 'ids --write 正常退出');
   const once = readFileSync(file, 'utf8');
+  ok(once !== JSON.stringify(raw, null, 2) + '\n' && JSON.parse(once).episodes[0].scenes.every((s) => isId(s.id, 'sc')), 'ids --write 真的写回了文件');
   run('ids', file, '--write');
   eq(readFileSync(file, 'utf8'), once, 'ids 幂等');
   eq(run('migrate', file).status, 1, 'migrate 缺 --outline 报错');
+  eq(run('renumber', file).status, 1, 'renumber 缺 --outline 报错');
+  eq(run('renumber', file, '--outline', OUTLINE_PATH, '--write').status, 0, 'renumber --write 正常退出');
+  eq(readFileSync(file, 'utf8'), once, '集号本来就对时 renumber 不改文件');
   rmSync(dir, { recursive: true, force: true });
 }
 console.log(`✓ ${passed} 项自测全部通过`);
