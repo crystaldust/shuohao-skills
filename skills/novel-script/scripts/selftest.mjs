@@ -76,7 +76,7 @@ eq(sceneSeconds(sc, { ...DEFAULT_PARAMS, charsPerSecond: 9 }).dialogue, 1, '语�
 const stats = computeStats(FIXTURE);
 eq(stats.totals.episodes, 6, '样例全六集');
 eq(stats.totals.scenes, 9, '样例九场');
-eq(stats.totals.lines, 123, '样例台词句数');
+eq(stats.totals.lines, 143, '样例台词句数');
 ok(stats.totals.estSeconds > 600 && stats.totals.estSeconds < 750, '预估总时长在目标带附近');
 eq(stats.totals.targetSeconds, 720, '目标秒数汇总');
 ok(stats.episodes.every((e) => e.est >= 102 && e.est <= 138), '每一集都落在 ±15% 容差带内');
@@ -128,6 +128,20 @@ eq(gateReport(FIXTURE).length, 11, '十一道门');
   const g = gate(doc, 'line-length');
   ok(!g.ok, '超长台词被拦');
   ok(g.detail.includes('字'), '报出字数');
+}
+// line-length — 上限跟分镜一切的最长秒数对齐：一拍只能落进一切，装不进的台词分镜怎么修都过不了
+{
+  eq(DEFAULT_PARAMS.maxLineChars, 22, '默认单句上限 = 5 秒 × 4.5 字/秒取整');
+  const doc = clone(FIXTURE);
+  const flow = doc.episodes[0].scenes[0].flow;
+  flow.push({ speaker: 'C03', line: '三个月可以。章程上请写一句：验过的样，谁也不许动。' });
+  ok(!gate(doc, 'line-length').ok, '25 字（5.6 秒）的台词在剧本层就被拦下');
+  flow[flow.length - 1] = { speaker: 'C03', line: '一二三四五六七八九十一二三四五六七八九十一二' };
+  ok(gate(doc, 'line-length').ok, '22 字正好放行');
+}
+{
+  eq(paramsOf({ params: { charsPerSecond: 6 } }).maxLineChars, 30, '语速调快，单句上限跟着按 5 秒折算');
+  eq(paramsOf({ params: { charsPerSecond: 6, maxLineChars: 12 } }).maxLineChars, 12, '显式给了 maxLineChars 就用给的');
 }
 // speaker
 {

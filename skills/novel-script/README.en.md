@@ -25,7 +25,7 @@ Same stance as the other three skills in this repo: **a checklist the model grad
 | --- | --- |
 | **IDs complete and consistent** | episode IDs copied from the outline and numbers matching it (checked with `--outline`); every scene and beat has an ID, none repeated |
 | **Episode duration** | estimate within ±15% of `targetSeconds` (speed, per-beat seconds and tolerance all tunable via `params`) |
-| Line length | ≤ 35 chars — a line you can't say in one breath can't be generated either |
+| Line length | ≤ 22 chars — one line must fit a single 5-second storyboard cut (5 s × speech rate) |
 | Speaker legality | speaker must be in the scene's cast, or explicitly `VO` |
 | Hook & cliff on paper | `hook` / `cliff` required per episode |
 | **Hook lands in the first 3 beats** | `hookBeat` claims where the hook's concrete image appears — the cold open is a gate, not a habit, so the hook and the actual opening can never drift apart |
@@ -94,6 +94,6 @@ node scripts/selftest.mjs
 
 206 assertions — timing engine, stats, gate-defeating cases, seed, rendering (both UI languages), export. No model calls, runs in about a second.
 
-The bundled example (`examples/渡口-script.json`) is a **complete 6-episode script** — 9 scenes, 123 lines, every episode inside the ±15% band, all gates passing against the outline and art fixtures.
+The bundled example (`examples/渡口-script.json`) is a **complete 6-episode script** — 9 scenes, 143 lines, every episode inside the ±15% band, all gates passing against the outline and art fixtures.
 
 **Only tested on macOS + Node 24.**

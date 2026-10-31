@@ -5,12 +5,12 @@
 ```json
 {
   "source": "渡口",
-  "params": { "charsPerSecond": 4.5, "actionSeconds": 2.5, "tolerance": 0.15, "maxLineChars": 35 },
+  "params": { "charsPerSecond": 4.5, "actionSeconds": 2.5, "tolerance": 0.15, "maxLineChars": 22 },
   "episodes": [ ... ]
 }
 ```
 
-`params` 可省略，省略就用默认值。四个键都只在需要偏离默认时写。
+`params` 可省略，省略就用默认值。四个键都只在需要偏离默认时写。`maxLineChars` 不写时按「5 秒 × `charsPerSecond`」取整（默认 22 字），和分镜一切的最长秒数对齐。
 
 ## episode
 
@@ -56,7 +56,7 @@
 | --- | --- |
 | `action` | 叙述体画面描述，一拍一件事。**不许出现引号台词**（「」『』“”都不行）——台词混进动作就没法计秒、没法喂 TTS |
 | `speaker` | 本场 `characters` 里的角色 id，或 `"VO"`（画外音/心声——谁的心声写进 delivery） |
-| `line` | 台词本体，口语，单句 ≤ 35 字（非空白字符计） |
+| `line` | 台词本体，口语，单句 ≤ 22 字（非空白字符计；默认按 5 秒 × 语速折算） |
 | `delivery` | 表演提示：语气、动作伴随、潜台词。可省略，建议都写 |
 
 一个节拍不能既有 `action` 又有 `line`；两者都没有也不行。
