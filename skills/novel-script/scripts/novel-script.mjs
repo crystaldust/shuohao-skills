@@ -20,16 +20,23 @@ import { assignIds, collectIds, cryptoRng, duplicateIds, isId, seededRng } from 
  * 一集写到五分钟的剧本在这里就会被拦下，不会流到生成环节才发现。
  */
 
+// 分镜一切最长 5 秒（novel-storyboard 的 maxCutSeconds），一拍台词只能落进一切。
+// 单句台词超过「5 秒 × 语速」，分镜怎么切都装不下，所以上限在剧本层按它折算。
+const MAX_CUT_SECONDS = 5;
+const lineCap = (charsPerSecond) => Math.floor(MAX_CUT_SECONDS * charsPerSecond);
+
 export const DEFAULT_PARAMS = {
   charsPerSecond: 4.5, // 中文口语偏快档
   actionSeconds: 2.5,  // 每个动作节拍的估时
   tolerance: 0.15,     // 时长容差 ±15%
-  maxLineChars: 35,    // 单句台词上限——一口气说不完的台词也生成不了
+  maxLineChars: lineCap(4.5), // 单句台词上限 22 字——分镜一切装得下
   hookWindow: 3,       // 开场钩子必须在全集前几拍内兑现——短剧开场 3 秒定生死
 };
 
+/** 只调了语速没给 maxLineChars 时，上限跟着语速重算。 */
 export function paramsOf(doc) {
-  return { ...DEFAULT_PARAMS, ...(doc?.params ?? {}) };
+  const p = { ...DEFAULT_PARAMS, ...(doc?.params ?? {}) };
+  return doc?.params?.maxLineChars == null ? { ...p, maxLineChars: lineCap(p.charsPerSecond) } : p;
 }
 
 /** 台词计秒用的字符数：去空白，标点算时间（停顿也是时间）。 */
